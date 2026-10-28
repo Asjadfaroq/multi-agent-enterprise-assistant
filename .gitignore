@@ -1,0 +1,64 @@
+# AI tooling
+.claude/
+.serena/
+.cursor/
+.aider*
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+*.egg
+build/
+dist/
+wheels/
+pip-wheel-metadata/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Tooling caches
+.ruff_cache/
+.mypy_cache/
+.pytype/
+.pyre/
+.pytest_cache/
+.hypothesis/
+.ipynb_checkpoints/
+
+# Coverage
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
+# Logs and local data
+*.log
+logs/
+*.sqlite
+*.sqlite3
+*.db
+pgdata/
+postgres-data/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
