@@ -30,7 +30,7 @@ PLAN_WITH_SEARCH = json.dumps({"steps": ["search"], "needs_tools": ["search_docu
 ANSWER = json.dumps(
     {
         "text": "14 weeks [parental-leave-policy].",
-        "citations": [],
+        "citations": ["parental-leave-policy"],
         "confidence": 1,
         "answer_found": True,
     }

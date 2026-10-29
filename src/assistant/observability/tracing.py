@@ -36,8 +36,13 @@ def tracing_config(user_id: str, role: str, thread_id: str) -> RunnableConfig:
         return {}
     # The handler finds its client by public key, so the client must exist before the handler.
     get_langfuse_client()
+    handler = CallbackHandler(public_key=get_settings().langfuse_public_key)
+    # LangChain otherwise hands a synchronous handler's events to a thread pool during async
+    # runs, so a span's start could be stamped after its end (negative durations in Langfuse).
+    # Inline, each event is recorded in order, the moment it happens.
+    handler.run_inline = True
     return {
-        "callbacks": [CallbackHandler(public_key=get_settings().langfuse_public_key)],
+        "callbacks": [handler],
         "metadata": {"user": user_id, "role": role, "thread_id": thread_id},
     }
 

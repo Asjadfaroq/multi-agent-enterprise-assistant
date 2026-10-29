@@ -111,6 +111,24 @@ def denied_write_tools(state: AgentState, available_tool_names: set[str]) -> lis
     return sorted(planned_write_tools(state) - available_tool_names)
 
 
+def citable_sources(state: AgentState) -> set[str]:
+    """Citations an answer may use: retrieved doc ids, plus ticket ids when tickets were read."""
+    sources = {hit.doc_id for hit in state["retrieved"]}
+    ticket_results = [
+        message
+        for message in messages_since_latest_question(state)
+        if isinstance(message, ToolMessage) and message.status == "success"
+    ]
+    return sources | ({"ticket-*"} if ticket_results else set())
+
+
+def cites_a_citable_source(citations: list[str], citable: set[str]) -> bool:
+    return any(
+        citation in citable or (citation.startswith("ticket-") and "ticket-*" in citable)
+        for citation in citations
+    )
+
+
 def pending_tool_calls(state: AgentState) -> list[ToolCall]:
     last_message = state["messages"][-1]
     return list(last_message.tool_calls) if isinstance(last_message, AIMessage) else []

@@ -18,6 +18,8 @@ CaseSelection = Literal["full", "smoke"]
 
 class CaseResult(BaseModel):
     id: str
+    # Which code produced this case; a partial re-run leaves other cases from an older version.
+    code_version: str | None = None
     category: str
     user: str
     question: str
@@ -61,6 +63,7 @@ class RunTimings(BaseModel):
 class EvalResults(BaseModel):
     run_at: datetime
     case_selection: CaseSelection
+    rerun_categories: list[str] = []
     code_version: str
     timings: RunTimings
     agent_model: str
@@ -156,3 +159,14 @@ def build_eval_results(
         per_category={category: summarise(results) for category, results in by_category.items()},
         cases=case_results,
     )
+
+
+def merge_rerun(previous: EvalResults, rerun_cases: list[CaseResult]) -> list[CaseResult]:
+    """Replaces the re-run cases in a full results file and keeps every other case as it was."""
+    rerun_by_id = {case.id: case for case in rerun_cases}
+    kept_cases = [
+        case.model_copy(update={"code_version": case.code_version or previous.code_version})
+        for case in previous.cases
+        if case.id not in rerun_by_id
+    ]
+    return kept_cases + rerun_cases

@@ -66,3 +66,7 @@ Thumbs.db
 # Eval outputs that are not committed
 evals/results/cache/
 evals/results/smoke.json
+docs/langfuse.png:Zone.Identifier
+
+# Windows download markers
+*:Zone.Identifier

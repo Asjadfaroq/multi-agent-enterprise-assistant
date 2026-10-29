@@ -3,7 +3,14 @@ name: CI
 on:
   push:
   pull_request:
-    branches: [main]
+  # Evals call the Anthropic API, so they only run when started by hand from the Actions tab.
+  workflow_dispatch:
+    inputs:
+      selection:
+        description: "Which golden cases to run"
+        type: choice
+        options: [smoke, full]
+        default: smoke
 
 env:
   # Matches DATABASE_URL's default in src/assistant/config.py and the service port below.
@@ -35,10 +42,7 @@ jobs:
       - run: uv run pytest
 
   eval:
-    # Smoke eval on every push to main, full eval plus regression gate on pull requests to main.
-    if: >-
-      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
-      (github.event_name == 'pull_request' && github.base_ref == 'main')
+    if: github.event_name == 'workflow_dispatch'
     needs: lint-and-unit-tests
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -58,8 +62,14 @@ jobs:
           --health-interval 5s --health-timeout 5s --health-retries 10
     env:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-      EVAL_SELECTION: ${{ github.event_name == 'pull_request' && 'full' || 'smoke' }}
+      EVAL_SELECTION: ${{ inputs.selection }}
     steps:
+      - name: Check that the Anthropic API key is configured
+        run: |
+          if [ -z "$ANTHROPIC_API_KEY" ]; then
+            echo "::error::The ANTHROPIC_API_KEY repository secret is not set. Add it under Settings > Secrets and variables > Actions, then run this workflow again."
+            exit 1
+          fi
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
         with:

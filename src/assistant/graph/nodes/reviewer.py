@@ -8,6 +8,8 @@ from assistant.graph.state import (
     AssistantContext,
     Node,
     StateUpdate,
+    citable_sources,
+    cites_a_citable_source,
     completed_write_actions,
     denied_write_tools,
     format_retrieved_context,
@@ -62,12 +64,21 @@ def make_reviewer_node(llm: BaseChatModel, max_revisions: int) -> Node:
             # no factual claims, so there is nothing for a model to verify.
             review = Review(supported=True, reason="Fixed reply without factual claims.")
             return {"review": review, "verdict": "accepted", "messages": [AIMessage(answer.text)]}
-        review = await ask_for_json(
-            llm,
-            REVIEWER_INSTRUCTIONS,
-            build_reviewer_prompt(state, answer, available_tools),
-            Review,
-        )
+        citable = citable_sources(state)
+        if citable and not cites_a_citable_source(answer.citations, citable):
+            # Checked without a model: an answer built on sources must name at least one of them.
+            sources = ", ".join(sorted(source.replace("*", "<id>") for source in citable))
+            review = Review(
+                supported=False,
+                reason=f"The answer cites none of the sources it was written from: {sources}.",
+            )
+        else:
+            review = await ask_for_json(
+                llm,
+                REVIEWER_INSTRUCTIONS,
+                build_reviewer_prompt(state, answer, available_tools),
+                Review,
+            )
         if review.supported:
             return {"review": review, "verdict": "accepted", "messages": [AIMessage(answer.text)]}
         if state["revision_count"] < max_revisions:

@@ -11,6 +11,7 @@ from assistant.observability.tracing import flush_traces
 from evals.behaviour import behaviour_checks, key_fact_recall
 from evals.case_cache import cache_path, code_fingerprint, load_cached_runs, save_cached_runs
 from evals.golden_cases import (
+    CATEGORY_BEHAVIOURS,
     GoldenCase,
     golden_set_fingerprint,
     load_golden_cases,
@@ -22,9 +23,11 @@ from evals.results import (
     FULL_RESULTS_PATH,
     SMOKE_RESULTS_PATH,
     CaseResult,
+    EvalResults,
     RunTimings,
     build_eval_results,
     failure_reasons,
+    merge_rerun,
 )
 from evals.run_cases import (
     CaseRun,
@@ -92,9 +95,11 @@ async def score_runs(runs: list[CaseRun]) -> list[CaseResult]:
     return list(await asyncio.gather(*(score_when_free(run) for run in runs)))
 
 
-async def main(smoke: bool, ignore_cache: bool) -> None:
+async def main(smoke: bool, ignore_cache: bool, categories: list[str]) -> None:
     started = time.perf_counter()
     cases = select_cases(load_golden_cases(), smoke)
+    if categories:
+        cases = [case for case in cases if case.category in categories]
     code_version = code_fingerprint()
     run_cache = cache_path(golden_set_fingerprint(), code_version)
     cached_runs = {} if ignore_cache else load_cached_runs(run_cache)
@@ -104,7 +109,13 @@ async def main(smoke: bool, ignore_cache: bool) -> None:
     graph_seconds = time.perf_counter() - started
     all_runs = cached_runs | {run.case.id: run for run in new_runs}
     save_cached_runs(run_cache, all_runs)
-    case_results = await score_runs([all_runs[case.id] for case in cases])
+    case_results = [
+        result.model_copy(update={"code_version": code_version})
+        for result in await score_runs([all_runs[case.id] for case in cases])
+    ]
+    if categories:
+        previous = EvalResults.model_validate_json(FULL_RESULTS_PATH.read_text(encoding="utf-8"))
+        case_results = merge_rerun(previous, case_results)
     timings = RunTimings(
         graph_seconds=graph_seconds,
         scoring_seconds=time.perf_counter() - started - graph_seconds,
@@ -114,6 +125,7 @@ async def main(smoke: bool, ignore_cache: bool) -> None:
     )
     selection = "smoke" if smoke else "full"
     results = build_eval_results(case_results, get_settings(), selection, code_version, timings)
+    results.rerun_categories = categories
     results_path = SMOKE_RESULTS_PATH if smoke else FULL_RESULTS_PATH
     results_path.write_text(results.model_dump_json(indent=2), encoding="utf-8")
     flush_traces()
@@ -127,9 +139,22 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument(
         "--fresh", action="store_true", help="re-run every case instead of using cached outputs"
     )
+    parser.add_argument(
+        "--categories",
+        nargs="+",
+        default=[],
+        choices=sorted(CATEGORY_BEHAVIOURS),
+        help="re-run only these categories and merge them into the full results file",
+    )
     return parser.parse_args()
 
 
 if __name__ == "__main__":
     arguments = parse_arguments()
-    asyncio.run(main(smoke=arguments.smoke, ignore_cache=arguments.fresh))
+    if arguments.smoke and arguments.categories:
+        raise SystemExit(
+            "--categories merges into the full results, so it cannot be used with --smoke"
+        )
+    asyncio.run(
+        main(smoke=arguments.smoke, ignore_cache=arguments.fresh, categories=arguments.categories)
+    )

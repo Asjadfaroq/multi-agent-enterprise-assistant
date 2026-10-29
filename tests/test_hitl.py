@@ -30,7 +30,7 @@ LIST_TICKETS_CALL = AIMessage(
     "", tool_calls=[{"name": "list_tickets", "args": {}, "id": "call-list"}]
 )
 FINAL_ANSWER = json.dumps(
-    {"text": "Done.", "citations": [], "confidence": 0.9, "answer_found": True}
+    {"text": "Done [ticket-1].", "citations": ["ticket-1"], "confidence": 0.9, "answer_found": True}
 )
 SUPPORTED_REVIEW = json.dumps({"supported": True, "reason": "Matches the tool result."})
 UNSUPPORTED_REVIEW = json.dumps({"supported": False, "reason": "Claim not in tool results."})

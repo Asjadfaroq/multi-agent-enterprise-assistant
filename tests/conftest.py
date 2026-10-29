@@ -118,6 +118,16 @@ class FakeToolbox:
 GraphBuilder = Callable[[list[str | AIMessage], BaseCheckpointSaver | None], CompiledStateGraph]
 
 
+@pytest.fixture(autouse=True)
+def no_tracing(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Tests never send traces, even when the shell has Langfuse keys exported."""
+    for variable in ("LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY"):
+        monkeypatch.setenv(variable, "")
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
+
+
 @pytest.fixture
 def toolbox() -> FakeToolbox:
     return FakeToolbox()
