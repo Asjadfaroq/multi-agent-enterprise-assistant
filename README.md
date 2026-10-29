@@ -11,16 +11,17 @@ flowchart LR
     user([Employee]) -->|POST /chat, /approve, X-User| api[FastAPI]
     api --> graph
     subgraph graph[LangGraph agent]
-        guard[Input guard<br/>injection check, PII masking] --> planner[Planner]
-        planner --> retriever[Retriever<br/>chunk injection check, backfill]
-        planner --> executor
+        guard[Input guard<br/>injection check, PII masking] --> join{{apply_input_guard<br/>waits for both, ends turn if blocked}}
+        planner[Planner] --> join
+        join --> retriever[Retriever<br/>chunk injection check, backfill]
+        join --> executor
         retriever --> executor[Executor<br/>tool calling]
         executor -->|write tool| approval{{Approval interrupt}}
         approval -->|approved| tools[Run tools]
         tools --> executor
         executor --> reviewer[Reviewer<br/>grounding, citations]
         reviewer -->|revise once| executor
-        reviewer --> memory[Memory<br/>user facts]
+        reviewer -.->|after the reply is sent| memory[Memory<br/>user facts]
     end
     retriever -->|search_documents| mcp
     tools -->|ticket tools| mcp
@@ -38,8 +39,8 @@ flowchart LR
 
 1. `POST /chat` arrives with the caller in the `X-User` header. The API looks up the role and opens an MCP session for that user.
 2. Personal data in the message (emails, phone numbers, Saudi national IDs and iqama numbers) is masked before anything else sees it.
-3. The input guard checks the message for prompt injection. A blocked message gets a short refusal and the turn ends.
-4. The planner reads what memory holds about the user and decides which tools the question needs.
+3. The input guard and the planner start at the same time. The guard checks the message for prompt injection; the planner reads what memory holds about the user and decides which tools the question needs.
+4. An `apply_input_guard` step waits for both. If the guard blocked the message, it discards the plan, the user gets a short refusal and the turn ends; otherwise the turn follows the plan.
 5. The retriever calls `search_documents` on the MCP server. The server filters chunks by the caller's role in SQL, takes the 10 nearest candidates and reranks them to the best 5.
 6. Each retrieved chunk is checked for planted instructions. Poisoned chunks are dropped, and one wider search refills their places.
 7. The executor answers from the excerpts, or calls the ticket tools the plan named. Any write tool stops the run at an approval interrupt.
