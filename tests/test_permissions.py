@@ -116,7 +116,14 @@ def test_agent_ticket_is_recorded_as_created_by_the_agent(connection: psycopg.Co
     insert_test_user(connection, "test-agent", "agent")
 
     require_ticket_write_permission(connection, "test-agent")
-    ticket = insert_ticket(connection, "Printer jam", "Floor 2 printer", "it", "P3", "test-agent")
+    ticket = insert_ticket(
+        connection,
+        title="Printer jam",
+        description="Floor 2 printer",
+        category="it",
+        priority="P3",
+        created_by="test-agent",
+    )
 
     assert (ticket.created_by, ticket.status) == ("test-agent", "open")
 
@@ -148,9 +155,21 @@ def test_mcp_server_lists_write_tools_only_for_ticket_writers() -> None:
 def insert_tickets_for_read_policy(connection: psycopg.Connection) -> tuple[int, int]:
     insert_test_user(connection, "test-viewer", "viewer")
     insert_test_user(connection, "test-agent", "agent")
-    own = insert_ticket(connection, "Viewer's laptop", "Broken", "it", "P3", "test-viewer")
+    own = insert_ticket(
+        connection,
+        title="Viewer's laptop",
+        description="Broken",
+        category="it",
+        priority="P3",
+        created_by="test-viewer",
+    )
     other = insert_ticket(
-        connection, "Refund for a customer", "Billing", "billing", "P3", "test-agent"
+        connection,
+        title="Refund for a customer",
+        description="Billing",
+        category="billing",
+        priority="P3",
+        created_by="test-agent",
     )
     return own.id, other.id
 

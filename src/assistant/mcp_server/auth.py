@@ -96,10 +96,6 @@ def can_write_tickets(role: Role) -> bool:
     return role in TICKET_WRITER_ROLES
 
 
-def require_known_user(connection: psycopg.Connection, user_id: str) -> None:
-    role_for_user(connection, user_id)
-
-
 def require_ticket_write_permission(connection: psycopg.Connection, user_id: str) -> None:
     role = role_for_user(connection, user_id)
     if not can_write_tickets(role):

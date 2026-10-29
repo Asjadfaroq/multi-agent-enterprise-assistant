@@ -87,6 +87,7 @@ def fetch_ticket(connection: psycopg.Connection, ticket_id: int, created_by: str
 
 def insert_ticket(
     connection: psycopg.Connection,
+    *,
     title: str,
     description: str,
     category: TicketCategory,
@@ -148,7 +149,14 @@ def create_ticket(
     user_id = caller_user_id(context)
     with psycopg.connect(get_settings().database_url) as connection:
         require_ticket_write_permission(connection, user_id)
-        return insert_ticket(connection, title, description, category, priority, user_id)
+        return insert_ticket(
+            connection,
+            title=title,
+            description=description,
+            category=category,
+            priority=priority,
+            created_by=user_id,
+        )
 
 
 def update_ticket(

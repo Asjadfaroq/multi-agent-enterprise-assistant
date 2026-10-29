@@ -33,8 +33,7 @@ class ProposedToolCall(BaseModel):
 
 
 def permission_refusal(denied_tools: list[str]) -> Answer:
-    # A fixed reply: in an eval run the model's own account of its tools was wrong and the
-    # reviewer rejected it, so the user got a generic fallback instead of the actual reason.
+    # A fixed reply, because the model's own account of its permissions is unreliable.
     actions = " or ".join(WRITE_ACTION_DESCRIPTIONS[tool] for tool in denied_tools)
     return Answer(
         text=(
@@ -58,15 +57,13 @@ async def request_approval(
     state: AgentState, runtime: Runtime[AssistantContext]
 ) -> Command[Literal["run_tools", "executor", "__end__"]]:
     calls = pending_tool_calls(state)
-    # One approved write per turn: in a live run the model re-proposed the write it had just made,
-    # which would have created a duplicate ticket.
+    # One approved write per turn, so a re-proposed write cannot create a duplicate ticket.
     if completed_write_actions(state):
         return Command(
             goto="executor",
             update={"messages": refuse_tool_calls(calls, WRITE_ALREADY_DONE_MESSAGE)},
         )
-    # A write the plan did not ask for is refused without bothering an approver: in a live run the
-    # model offered to open a ticket when the user only asked what to tell a vendor.
+    # A write the plan did not ask for is refused without bothering an approver.
     if any(
         call["name"] in WRITE_TOOL_NAMES and call["name"] not in planned_write_tools(state)
         for call in calls

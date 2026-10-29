@@ -6,9 +6,7 @@ from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
 from assistant.config import get_settings
 from assistant.graph.build import build_graph, checkpoint_serializer
-from assistant.llm import get_chat_model
 from assistant.observability.tracing import flush_traces
-from evals.behaviour import behaviour_checks, key_fact_recall
 from evals.case_cache import cache_path, code_fingerprint, load_cached_runs, save_cached_runs
 from evals.golden_cases import (
     CATEGORY_BEHAVIOURS,
@@ -17,16 +15,13 @@ from evals.golden_cases import (
     load_golden_cases,
     select_cases,
 )
-from evals.judge import JudgeVerdict, judge_case
 from evals.report import print_report
 from evals.results import (
     FULL_RESULTS_PATH,
     SMOKE_RESULTS_PATH,
-    CaseResult,
     EvalResults,
     RunTimings,
     build_eval_results,
-    failure_reasons,
     merge_rerun,
 )
 from evals.run_cases import (
@@ -35,7 +30,7 @@ from evals.run_cases import (
     reset_tickets,
     run_cases_concurrently,
 )
-from evals.run_ragas import RAGAS_CATEGORIES, RagasMetrics, build_ragas_metrics, score_with_ragas
+from evals.scoring import score_runs
 
 
 async def run_golden_cases(cases: list[GoldenCase]) -> list[CaseRun]:
@@ -50,49 +45,6 @@ async def run_golden_cases(cases: list[GoldenCase]) -> list[CaseRun]:
         # Flushed so progress shows even when output is redirected to a file.
         print(f"Reset sample tickets and cleared {cleared} pending approval threads", flush=True)
         return await run_cases_concurrently(graph, cases, settings.eval_case_concurrency)
-
-
-async def score_run(run: CaseRun, ragas_metrics: RagasMetrics) -> CaseResult:
-    settings = get_settings()
-    judge: JudgeVerdict | None = None
-    judge_error: str | None = None
-    try:
-        judge = await judge_case(get_chat_model("judge"), run)
-    except Exception as error:
-        judge_error = repr(error)
-    ragas = None
-    if run.case.category in RAGAS_CATEGORIES and run.error is None:
-        ragas = await score_with_ragas(ragas_metrics, run)
-    checks = behaviour_checks(
-        run, judge.behaviour_met if judge else None, settings.eval_arabic_min_letter_ratio
-    )
-    reasons = failure_reasons(checks, judge, judge_error, ragas, settings)
-    return CaseResult(
-        id=run.case.id,
-        category=run.case.category,
-        user=run.case.user,
-        question=run.case.question,
-        answer=run.answer_text,
-        passed=not reasons,
-        failure_reasons=reasons,
-        behaviour_checks=checks,
-        judge=judge,
-        judge_error=judge_error,
-        ragas=ragas,
-        key_fact_recall=key_fact_recall(run),
-        latency_seconds=run.latency_seconds,
-    )
-
-
-async def score_runs(runs: list[CaseRun]) -> list[CaseResult]:
-    ragas_metrics = build_ragas_metrics()
-    concurrency_limit = asyncio.Semaphore(get_settings().eval_scoring_concurrency)
-
-    async def score_when_free(run: CaseRun) -> CaseResult:
-        async with concurrency_limit:
-            return await score_run(run, ragas_metrics)
-
-    return list(await asyncio.gather(*(score_when_free(run) for run in runs)))
 
 
 async def main(smoke: bool, ignore_cache: bool, categories: list[str]) -> None:

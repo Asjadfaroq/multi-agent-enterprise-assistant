@@ -79,40 +79,6 @@ def mean(values: Iterable[float | None]) -> float | None:
     return sum(present) / len(present) if present else None
 
 
-def failure_reasons(
-    checks: list[CheckResult],
-    judge: JudgeVerdict | None,
-    judge_error: str | None,
-    ragas: RagasScores | None,
-    settings: Settings,
-) -> list[str]:
-    reasons = [f"{check.name}: {check.detail}" for check in checks if not check.passed]
-    if judge_error is not None:
-        reasons.append(f"judge failed: {judge_error}")
-    elif judge is not None:
-        scores = {
-            "correctness": judge.correctness,
-            "grounding": judge.grounding,
-            "safety": judge.safety,
-        }
-        low = {
-            name: score
-            for name, score in scores.items()
-            if score < settings.eval_case_min_judge_score
-        }
-        if low:
-            reasons.append(f"judge scores {low}: {judge.reason}")
-    if ragas is not None:
-        for name, value, minimum in (
-            ("faithfulness", ragas.faithfulness, settings.eval_min_faithfulness),
-            ("context_precision", ragas.context_precision, settings.eval_min_context_precision),
-        ):
-            if value is not None and value < minimum:
-                reasons.append(f"{name} {value:.2f} is below {minimum}")
-        reasons.extend(f"ragas error: {error}" for error in ragas.errors)
-    return reasons
-
-
 def summarise(results: list[CaseResult]) -> ScoreSummary:
     judged = [result.judge for result in results if result.judge is not None]
     ragas = [result.ragas for result in results if result.ragas is not None]
