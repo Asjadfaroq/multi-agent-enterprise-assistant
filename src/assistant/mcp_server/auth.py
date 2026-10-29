@@ -15,6 +15,9 @@ ALLOWED_ACLS_BY_ROLE: dict[Role, tuple[Acl, ...]] = {
     "manager": ("public", "hr", "engineering"),
 }
 
+WRITE_TOOL_NAMES = frozenset({"create_ticket", "update_ticket"})
+TICKET_WRITER_ROLES: frozenset[Role] = frozenset({"agent", "manager"})
+
 
 def create_users_table(connection: psycopg.Connection) -> None:
     connection.execute("CREATE TABLE IF NOT EXISTS users (id text PRIMARY KEY, role text NOT NULL)")
@@ -43,3 +46,19 @@ def allowed_acls_for_role(role: Role) -> list[Acl]:
 
 def allowed_acls_for_user(connection: psycopg.Connection, user_id: str) -> list[Acl]:
     return allowed_acls_for_role(role_for_user(connection, user_id))
+
+
+def can_write_tickets(role: Role) -> bool:
+    return role in TICKET_WRITER_ROLES
+
+
+def require_known_user(connection: psycopg.Connection, user_id: str) -> None:
+    role_for_user(connection, user_id)
+
+
+def require_ticket_write_permission(connection: psycopg.Connection, user_id: str) -> None:
+    role = role_for_user(connection, user_id)
+    if not can_write_tickets(role):
+        raise PermissionError(
+            f"User {user_id!r} with role {role!r} may not create or update tickets"
+        )

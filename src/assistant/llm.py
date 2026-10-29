@@ -2,6 +2,7 @@ from functools import lru_cache
 from typing import Literal
 
 import numpy as np
+from huggingface_hub import try_to_load_from_cache
 from langchain_anthropic import ChatAnthropic
 from langchain_core.language_models import BaseChatModel
 from numpy.typing import NDArray
@@ -34,8 +35,15 @@ def get_embedding_model() -> SentenceTransformer:
     return model
 
 
+def is_embedding_model_cached() -> bool:
+    cached_file = try_to_load_from_cache(get_settings().embedding_model, "modules.json")
+    return isinstance(cached_file, str)
+
+
 def embed_texts(texts: list[str]) -> FloatArray:
-    return get_embedding_model().encode(texts, normalize_embeddings=True, convert_to_numpy=True)
+    return get_embedding_model().encode(
+        texts, normalize_embeddings=True, convert_to_numpy=True, show_progress_bar=False
+    )
 
 
 def embed_query(query: str) -> FloatArray:

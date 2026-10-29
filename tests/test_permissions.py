@@ -13,8 +13,10 @@ from assistant.mcp_server.auth import (
     allowed_acls_for_user,
     create_users_table,
     current_user_id,
+    require_ticket_write_permission,
 )
 from assistant.mcp_server.tools_kb import search_chunks
+from assistant.mcp_server.tools_tickets import create_tickets_table, insert_ticket
 
 DB_CONNECT_TIMEOUT_SECONDS = 2
 SEARCH_EVERYTHING_K = 1000
@@ -32,6 +34,7 @@ def connection() -> Iterator[psycopg.Connection]:
         pytest.skip(f"Postgres is not reachable at {settings.database_url}: {error}")
     create_chunks_table(connection, settings.embedding_dimensions)
     create_users_table(connection)
+    create_tickets_table(connection)
     register_vector(connection)
     try:
         yield connection
@@ -100,3 +103,19 @@ def test_search_without_caller_identity_is_refused(monkeypatch: pytest.MonkeyPat
             current_user_id()
     finally:
         get_settings.cache_clear()
+
+
+def test_viewer_cannot_create_or_update_tickets(connection: psycopg.Connection) -> None:
+    insert_test_user(connection, "test-viewer", "viewer")
+
+    with pytest.raises(PermissionError, match="role 'viewer' may not create or update tickets"):
+        require_ticket_write_permission(connection, "test-viewer")
+
+
+def test_agent_ticket_is_recorded_as_created_by_the_agent(connection: psycopg.Connection) -> None:
+    insert_test_user(connection, "test-agent", "agent")
+
+    require_ticket_write_permission(connection, "test-agent")
+    ticket = insert_ticket(connection, "Printer jam", "Floor 2 printer", "it", "P3", "test-agent")
+
+    assert (ticket.created_by, ticket.status) == ("test-agent", "open")

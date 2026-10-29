@@ -1,13 +1,14 @@
 import asyncio
+import itertools
 import json
 
-from langchain_core.language_models.fake_chat_models import FakeListChatModel
+from conftest import FakeToolbox, GraphBuilder, ScriptedChatModel
+from langchain_core.messages import AIMessage
 
 from assistant.graph.build import build_graph
+from assistant.graph.nodes.executor import EXECUTOR_INSTRUCTIONS
 from assistant.graph.nodes.reviewer import UNSUPPORTED_ANSWER_FALLBACK
 from assistant.graph.state import new_turn_state
-from assistant.llm import ModelRole
-from assistant.mcp_server.tools_kb import SearchHit
 
 QUESTION = "How long is maternity leave?"
 PLAN_WITH_SEARCH = json.dumps(
@@ -29,36 +30,19 @@ REVISED_DRAFT = json.dumps(
 SUPPORTED_REVIEW = json.dumps({"supported": True, "reason": "Matches the excerpt."})
 UNSUPPORTED_REVIEW = json.dumps({"supported": False, "reason": "Pay is not mentioned."})
 
-LEAVE_POLICY_HIT = SearchHit(
-    doc_id="parental-leave-policy",
-    acl="hr",
-    title="Parental Leave Policy",
-    content="Birthing parents receive 14 weeks of fully paid maternity leave.",
-    score=0.9,
-)
 
-
-class RecordingSearch:
-    def __init__(self) -> None:
-        self.calls: list[tuple[str, str]] = []
-
-    async def __call__(self, user_id: str, query: str) -> list[SearchHit]:
-        self.calls.append((user_id, query))
-        return [LEAVE_POLICY_HIT]
-
-
-def run_graph(llm_replies: list[str], search: RecordingSearch) -> tuple[list[str], str]:
-    fake_llm = FakeListChatModel(responses=llm_replies)
-
-    def fake_chat_model_factory(role: ModelRole) -> FakeListChatModel:
-        return fake_llm
-
-    graph = build_graph(chat_model_factory=fake_chat_model_factory, search_documents=search)
+def run_graph(
+    build_scripted_graph: GraphBuilder, toolbox: FakeToolbox, llm_replies: list[str]
+) -> tuple[list[str], str]:
+    graph = build_scripted_graph(llm_replies, None)
+    context = toolbox.context(can_write_tickets=False)
 
     async def collect_visited_nodes_and_answer() -> tuple[list[str], str]:
         visited_nodes: list[str] = []
         final_answer = ""
-        async for update in graph.astream(new_turn_state("huda", QUESTION), stream_mode="updates"):
+        async for update in graph.astream(
+            new_turn_state("huda", QUESTION), context=context, stream_mode="updates"
+        ):
             for node_name, node_update in update.items():
                 visited_nodes.append(node_name)
                 if node_update and "messages" in node_update:
@@ -68,26 +52,32 @@ def run_graph(llm_replies: list[str], search: RecordingSearch) -> tuple[list[str
     return asyncio.run(collect_visited_nodes_and_answer())
 
 
-def test_company_question_is_planned_retrieved_drafted_and_reviewed() -> None:
-    search = RecordingSearch()
+def test_company_question_is_planned_retrieved_drafted_and_reviewed(
+    build_scripted_graph: GraphBuilder, toolbox: FakeToolbox
+) -> None:
+    replies = [PLAN_WITH_SEARCH, GROUNDED_DRAFT, SUPPORTED_REVIEW]
 
-    visited, answer = run_graph([PLAN_WITH_SEARCH, GROUNDED_DRAFT, SUPPORTED_REVIEW], search)
+    visited, answer = run_graph(build_scripted_graph, toolbox, replies)
 
     assert visited == ["planner", "retriever", "executor", "reviewer"]
     assert answer == "Maternity leave is 14 weeks [parental-leave-policy]."
-    assert search.calls == [("huda", QUESTION)]
+    assert toolbox.search_queries == [QUESTION]
 
 
-def test_small_talk_skips_document_search() -> None:
-    search = RecordingSearch()
+def test_small_talk_skips_document_search(
+    build_scripted_graph: GraphBuilder, toolbox: FakeToolbox
+) -> None:
+    replies = [PLAN_WITHOUT_TOOLS, GROUNDED_DRAFT, SUPPORTED_REVIEW]
 
-    visited, _ = run_graph([PLAN_WITHOUT_TOOLS, GROUNDED_DRAFT, SUPPORTED_REVIEW], search)
+    visited, _ = run_graph(build_scripted_graph, toolbox, replies)
 
     assert visited == ["planner", "executor", "reviewer"]
-    assert search.calls == []
+    assert toolbox.search_queries == []
 
 
-def test_unsupported_draft_is_revised_once_then_accepted() -> None:
+def test_unsupported_draft_is_revised_once_then_accepted(
+    build_scripted_graph: GraphBuilder, toolbox: FakeToolbox
+) -> None:
     replies = [
         PLAN_WITH_SEARCH,
         GROUNDED_DRAFT,
@@ -96,13 +86,15 @@ def test_unsupported_draft_is_revised_once_then_accepted() -> None:
         SUPPORTED_REVIEW,
     ]
 
-    visited, answer = run_graph(replies, RecordingSearch())
+    visited, answer = run_graph(build_scripted_graph, toolbox, replies)
 
     assert visited == ["planner", "retriever", "executor", "reviewer", "executor", "reviewer"]
     assert answer == "It is 14 weeks, fully paid [parental-leave-policy]."
 
 
-def test_draft_still_unsupported_after_revision_ends_with_fallback_answer() -> None:
+def test_draft_still_unsupported_after_revision_ends_with_fallback_answer(
+    build_scripted_graph: GraphBuilder, toolbox: FakeToolbox
+) -> None:
     replies = [
         PLAN_WITH_SEARCH,
         GROUNDED_DRAFT,
@@ -111,7 +103,41 @@ def test_draft_still_unsupported_after_revision_ends_with_fallback_answer() -> N
         UNSUPPORTED_REVIEW,
     ]
 
-    visited, answer = run_graph(replies, RecordingSearch())
+    visited, answer = run_graph(build_scripted_graph, toolbox, replies)
 
     assert visited == ["planner", "retriever", "executor", "reviewer", "executor", "reviewer"]
     assert answer == UNSUPPORTED_ANSWER_FALLBACK
+
+
+def test_executor_history_is_only_appended_to_across_tool_calls_and_revisions(
+    toolbox: FakeToolbox,
+) -> None:
+    # Claude signs thinking blocks against the messages before them, so any rewrite of earlier
+    # messages makes the next call fail.
+    list_tickets_call = AIMessage(
+        "", tool_calls=[{"name": "list_tickets", "args": {}, "id": "call-list"}]
+    )
+    scripted_model = ScriptedChatModel(
+        messages=iter(
+            [
+                PLAN_WITH_SEARCH,
+                list_tickets_call,
+                GROUNDED_DRAFT,
+                UNSUPPORTED_REVIEW,
+                REVISED_DRAFT,
+                SUPPORTED_REVIEW,
+            ]
+        )
+    )
+    graph = build_graph(chat_model_factory=lambda role: scripted_model)
+
+    asyncio.run(graph.ainvoke(new_turn_state("huda", QUESTION), context=toolbox.context(False)))
+
+    executor_prompts = [
+        prompt
+        for prompt in scripted_model.received_prompts
+        if prompt[0].text.startswith(EXECUTOR_INSTRUCTIONS)
+    ]
+    assert len(executor_prompts) == 3
+    for earlier, later in itertools.pairwise(executor_prompts):
+        assert later[: len(earlier)] == earlier

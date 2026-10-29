@@ -25,6 +25,7 @@ class Settings(BaseSettings):
     # bge models are trained with this instruction on queries; documents are embedded without it.
     embedding_query_prefix: str = "Represent this sentence for searching relevant passages: "
     search_result_count: int = Field(default=5, gt=0)
+    ticket_list_limit: int = Field(default=20, gt=0)
 
     # bge-small truncates input at 512 tokens, so chunks must stay below that.
     chunk_size_tokens: int = Field(default=500, gt=0, le=510)
