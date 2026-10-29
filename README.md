@@ -45,8 +45,8 @@ flowchart LR
 6. Each retrieved chunk is checked for planted instructions. Poisoned chunks are dropped, and one wider search refills their places.
 7. The executor answers from the excerpts, or calls the ticket tools the plan named. Any write tool stops the run at an approval interrupt.
 8. The reviewer checks that the answer cites a retrieved source and that every claim is supported. A rejected answer is revised once; after that the user gets a fixed fallback.
-9. The memory step stores up to two facts the user stated about themselves (preferred language, team).
-10. The final answer, its citations and a confidence score are returned. The whole turn is one trace in Langfuse.
+9. The final answer, its citations and a confidence score are returned.
+10. After the reply is sent, the memory step stores up to two facts the user stated about themselves (preferred language, team). The whole turn is one trace in Langfuse.
 
 ## Permissions model
 
