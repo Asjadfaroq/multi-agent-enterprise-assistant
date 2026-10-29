@@ -1,6 +1,27 @@
-# Multi-Agent Enterprise Assistant
+<h1 align="center">Multi-Agent Enterprise Assistant</h1>
 
-An internal assistant for a small company (the sample company is "Larkspur Systems"). Employees ask questions about company documents and read or change support tickets through an internal API. What each person can see and do depends on their role. It is built for teams that want an LLM assistant with permissions enforced in code rather than in prompts, a person approving every write, and a measurable quality bar: a LangGraph agent (planner, retriever, executor, reviewer) uses tools from an MCP server over a pgvector knowledge base, with Postgres checkpoints, Langfuse tracing and an evaluation suite that can gate CI.
+<p align="center">An internal assistant that answers from company documents and works with support tickets, with permissions enforced in code and a person approving every write.</p>
+
+<p align="center">
+<a href="https://github.com/Asjadfaroq/multi-agent-enterprise-assistant/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/Asjadfaroq/multi-agent-enterprise-assistant/actions/workflows/ci.yml/badge.svg"></a>
+<img alt="Python 3.12" src="https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white">
+<img alt="LangGraph" src="https://img.shields.io/badge/LangGraph-agent-1C3C3C">
+<img alt="PostgreSQL + pgvector" src="https://img.shields.io/badge/PostgreSQL-pgvector-4169E1?logo=postgresql&logoColor=white">
+<img alt="Anthropic Claude" src="https://img.shields.io/badge/Anthropic-Claude-D97757?logo=anthropic&logoColor=white">
+<img alt="MCP" src="https://img.shields.io/badge/MCP-streamable_HTTP-555555">
+</p>
+
+An internal assistant for a small company (the sample company is "Larkspur Systems"). Employees ask questions about company documents and read or change support tickets through an internal API. What each person can see and do depends on their role.
+
+It is built for teams that want an LLM assistant with permissions enforced in code rather than in prompts, a person approving every write, and a measurable quality bar. A LangGraph agent (planner, retriever, executor, reviewer) uses tools from an MCP server over a pgvector knowledge base, with Postgres checkpoints, Langfuse tracing and an evaluation suite that can gate CI.
+
+## Highlights
+
+- 55 of 58 golden cases pass, and every behaviour check passes.
+- Arabic answer relevancy went from 0.49 to 0.98 after the evals caught an English-only embedding model.
+- Permissions are enforced in SQL inside the MCP server, never in prompts.
+- Every write pauses for human approval and resumes from a Postgres checkpoint.
+- About $0.001 and 8,400 tokens per question, traced in Langfuse.
 
 Design decisions and the reasons behind them are recorded in [docs/DECISIONS.md](docs/DECISIONS.md).
 
@@ -47,6 +68,41 @@ flowchart LR
 8. The reviewer checks that the answer cites a retrieved source and that every claim is supported. A rejected answer is revised once; after that the user gets a fixed fallback.
 9. The final answer, its citations and a confidence score are returned.
 10. After the reply is sent, the memory step stores up to two facts the user stated about themselves (preferred language, team). The whole turn is one trace in Langfuse.
+
+## Try it
+
+With the stack running (see [Running locally](#running-locally)), nora, a viewer, asks a question:
+
+```bash
+curl -X POST localhost:8000/chat -H "X-User: nora" -H "Content-Type: application/json" \
+  -d '{"message": "What is the hotel limit per night in Europe?"}'
+```
+
+```json
+{"status": "answered", "thread_id": "3dee3d66-…", "answer": "The hotel limit in Europe is up to 150 EUR per night. [expense-policy]", "citations": ["expense-policy"], "confidence": 0.97, "proposed_action": []}
+```
+
+khalid, a support agent, asks for a ticket. The write pauses for approval:
+
+```bash
+curl -X POST localhost:8000/chat -H "X-User: khalid" -H "Content-Type: application/json" \
+  -d '{"message": "Open a P2 bug ticket: invoices fail to send for Al Noor Trading."}'
+```
+
+```json
+{"status": "awaiting_approval", "thread_id": "a1440ec9-17dd-4193-80f9-e17f5e56ecab", "answer": null, "citations": [], "confidence": null, "proposed_action": [{"tool": "create_ticket", "args": {"title": "Invoices fail to send for Al Noor Trading", "description": "Reported issue: invoices fail to send for the customer Al Noor Trading. …", "category": "bug", "priority": "P2"}}]}
+```
+
+lina, a manager, approves it, and the ticket is created:
+
+```bash
+curl -X POST localhost:8000/approve/a1440ec9-17dd-4193-80f9-e17f5e56ecab -H "X-User: lina" \
+  -H "Content-Type: application/json" -d '{"approved": true}'
+```
+
+```json
+{"status": "answered", "thread_id": "a1440ec9-17dd-4193-80f9-e17f5e56ecab", "answer": "I created a P2 bug ticket (ID 5, \"Invoices fail to send for Al Noor Trading\") in the open status. … [ticket-5]", "citations": ["ticket-5"], "confidence": 0.9, "proposed_action": []}
+```
 
 ## Permissions model
 
@@ -193,3 +249,12 @@ Evals need the MCP server running. Case outputs are cached per commit, so re-sco
 - Guardrail tags sit on a marker span, not on the trace's root span, because Langfuse cannot add tags to a trace that is already running.
 - Ragas faithfulness is noisy on one-sentence answers; repeated runs or a second judge would make the gate steadier.
 - There is no user interface; the API and the CLI demo are the way in.
+
+---
+
+<p align="center">Built by Asjad Farooq</p>
+
+<p align="center">
+<a href="https://github.com/Asjadfaroq"><img alt="GitHub" src="https://img.shields.io/badge/GitHub-Asjadfaroq-181717?logo=github&logoColor=white"></a>
+<a href="https://www.linkedin.com/in/asjadfarooqconnect"><img alt="LinkedIn" src="https://img.shields.io/badge/LinkedIn-Asjad_Farooq-0A66C2?logo=linkedin&logoColor=white"></a>
+</p>
