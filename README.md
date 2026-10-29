@@ -96,20 +96,20 @@ The golden set (`evals/golden/golden_set.jsonl`) has 58 hand-written cases tied 
 
 Each case is scored with ragas (faithfulness, answer relevancy, context precision) on the four answerable categories, a judge rubric from 1 to 5 on correctness, grounding and safety (judge model `claude-sonnet-5-5`, agent model `claude-haiku-5-5`), and deterministic behaviour checks (paused for the right write, no pause, tickets unchanged, input blocked, no write proposed, an expected source cited, answer in Arabic, forbidden text absent).
 
-Current results from [evals/results/latest.json](evals/results/latest.json). Factual and multi_hop were re-run after the citation guard; the other categories are from the previous full run of the same retrieval code.
+Current results from [evals/results/latest.json](evals/results/latest.json): one fresh run of all 58 cases on a single commit.
 
 | Category | Cases | Passed | Behaviour | Judge (1–5) | Faithfulness | Answer relevancy | Context precision |
 |---|---|---|---|---|---|---|---|
-| factual | 14 | 12 | 1.00 | 5.00 | 0.98 | 0.93 | 0.96 |
-| multi_hop | 8 | 5 | 1.00 | 5.00 | 0.93 | 0.93 | 0.90 |
+| factual | 14 | 13 | 1.00 | 5.00 | 1.00 | 0.92 | 0.96 |
+| multi_hop | 8 | 7 | 1.00 | 4.96 | 0.97 | 0.92 | 0.90 |
 | permission_restricted | 7 | 7 | 1.00 | 5.00 | – | – | – |
-| write_action | 7 | 7 | 1.00 | 4.86 | – | – | – |
+| write_action | 7 | 7 | 1.00 | 4.81 | – | – | – |
 | injection | 6 | 6 | 1.00 | 5.00 | – | – | – |
-| pii | 4 | 4 | 1.00 | 4.92 | 1.00 | 0.86 | 1.00 |
+| pii | 4 | 4 | 1.00 | 5.00 | 1.00 | 0.86 | 1.00 |
 | out_of_scope | 4 | 4 | 1.00 | 4.92 | – | – | – |
 | no_unrequested_write | 4 | 4 | 1.00 | 5.00 | – | – | – |
-| arabic | 4 | 3 | 1.00 | 5.00 | 0.88 | 0.99 | 1.00 |
-| **overall** | 58 | 52 | 1.00 | 4.97 | 0.96 | 0.93 | 0.96 |
+| arabic | 4 | 3 | 1.00 | 5.00 | 0.88 | 0.98 | 1.00 |
+| **overall** | 58 | 55 | 1.00 | 4.97 | 0.98 | 0.92 | 0.96 |
 
 The regression gate (`evals/regression_test.py`) requires faithfulness ≥ 0.85, context precision ≥ 0.80, judge mean ≥ 4.0 and every behaviour check passing. All five gate tests pass.
 
@@ -125,20 +125,19 @@ The regression gate (`evals/regression_test.py`) requires faithfulness ≥ 0.85,
 ### Known remaining failures
 
 - `factual-11`, `multi-hop-03`: the right chunk ranks below an incident runbook chunk (context precision 0.50). The answers are still correct.
-- `multi-hop-01`, `multi-hop-06`: small inferences the documents do not state ("a duplicate charge is a billing issue"), so faithfulness is 0.83 and 0.67. The judge scored both 5.
-- `factual-02`, `arabic-01`: faithfulness 0.75 and 0.50 on one-sentence answers that quote the source. This looks like ragas scoring noise; the judge scored both 5.
+- `arabic-01`: faithfulness 0.50 on a correct one-sentence answer ("150 EUR per night [expense-policy]" in Arabic). This looks like ragas scoring noise; the judge scored it 5 on all three dimensions.
 
 ## Performance and cost
 
 | Measure | Before | After |
 |---|---|---|
 | `/chat`, one viewer question | 14.7–15.2 s (new MCP process per request) | 4.4–5.4 s (one MCP server over HTTP) |
-| `/chat` today, with both injection checks and reranking | – | 10.6–11.1 s |
+| `/chat`, omar's canary question, 5 warm runs | 9.9–13.1 s, median 11.2 s (guard before planner, memory before reply) | 8.1–10.2 s, median 8.7 s (guard alongside planner, memory after reply) |
 | One search, MCP over stdio | 8.4–9.7 s (process start and model load) | 0.04 s on an open session |
 | Reranked search, median | 2.34 s (15 candidates, 512 tokens) | 0.77 s (10 candidates, 256 tokens) |
-| Full eval, 58 cases | 17.4 min (sequential) | 9.0 min (5 cases at a time) |
+| Full eval, 58 cases | 17.4 min (sequential) | 8.3 min (5 cases at a time) |
 
-Latencies were measured on a 4-core laptop CPU, where the reranker runs. A typical turn makes six model calls (input check, planner, chunk check, executor, reviewer, memory). Across 96 traced turns in Langfuse, a turn cost a median of $0.00109 (90th percentile $0.00148) and used about 8,700 tokens. Evaluation costs more, because the judge and ragas use the larger model; those calls are not traced.
+Latencies were measured on a 4-core laptop CPU, where the reranker runs. A typical turn makes six model calls (input check and planner in parallel, chunk check, executor, reviewer, then memory after the reply is sent). Across the 58 traced turns of the latest full eval, a turn cost a median of $0.00106 (90th percentile $0.00133) and used about 8,400 tokens. Evaluation costs more, because the judge and ragas use the larger model; those calls are not traced.
 
 ## Observability
 
