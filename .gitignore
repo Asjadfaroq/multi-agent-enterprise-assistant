@@ -62,3 +62,7 @@ Thumbs.db
 *.swp
 *.swo
 *~
+
+# Eval outputs that are not committed
+evals/results/cache/
+evals/results/smoke.json

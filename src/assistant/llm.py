@@ -46,8 +46,13 @@ def is_cached_locally(model_name: str) -> bool:
 
 @lru_cache
 def get_reranker() -> CrossEncoder:
-    model_name = get_settings().reranker_model
-    return CrossEncoder(model_name, device="cpu", local_files_only=is_cached_locally(model_name))
+    settings = get_settings()
+    return CrossEncoder(
+        settings.reranker_model,
+        device="cpu",
+        max_length=settings.reranker_max_tokens,
+        local_files_only=is_cached_locally(settings.reranker_model),
+    )
 
 
 def embed_texts(texts: list[str]) -> FloatArray:

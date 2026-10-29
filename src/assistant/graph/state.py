@@ -97,9 +97,13 @@ def completed_write_actions(state: AgentState) -> list[str]:
     ]
 
 
-def planned_write_tools(state: AgentState) -> set[str]:
+def planned_tools(state: AgentState) -> set[str]:
     plan = state["plan"]
-    return WRITE_TOOL_NAMES & set(plan.needs_tools) if plan is not None else set()
+    return set(plan.needs_tools) if plan is not None else set()
+
+
+def planned_write_tools(state: AgentState) -> set[str]:
+    return WRITE_TOOL_NAMES & planned_tools(state)
 
 
 def denied_write_tools(state: AgentState, available_tool_names: set[str]) -> list[str]:

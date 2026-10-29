@@ -27,7 +27,14 @@ from assistant.mcp_server.tools_kb import SearchHit
 
 MIN_ENCODED_LENGTH = get_settings().injection_encoded_payload_min_length
 PLAN_WITH_SEARCH = json.dumps({"steps": ["search"], "needs_tools": ["search_documents"]})
-ANSWER = json.dumps({"text": "14 weeks [parental-leave-policy].", "citations": [], "confidence": 1})
+ANSWER = json.dumps(
+    {
+        "text": "14 weeks [parental-leave-policy].",
+        "citations": [],
+        "confidence": 1,
+        "answer_found": True,
+    }
+)
 SUPPORTED_REVIEW = json.dumps({"supported": True, "reason": "Matches the excerpt."})
 POISONED_HIT = SearchHit(
     chunk_id=99,

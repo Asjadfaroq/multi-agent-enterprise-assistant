@@ -29,7 +29,9 @@ CREATE_TICKET_CALL = AIMessage(
 LIST_TICKETS_CALL = AIMessage(
     "", tool_calls=[{"name": "list_tickets", "args": {}, "id": "call-list"}]
 )
-FINAL_ANSWER = json.dumps({"text": "Done.", "citations": [], "confidence": 0.9})
+FINAL_ANSWER = json.dumps(
+    {"text": "Done.", "citations": [], "confidence": 0.9, "answer_found": True}
+)
 SUPPORTED_REVIEW = json.dumps({"supported": True, "reason": "Matches the tool result."})
 UNSUPPORTED_REVIEW = json.dumps({"supported": False, "reason": "Claim not in tool results."})
 ACCEPTED_ANSWER_REPLIES = [FINAL_ANSWER, SUPPORTED_REVIEW, NO_PROFILE_FACTS]

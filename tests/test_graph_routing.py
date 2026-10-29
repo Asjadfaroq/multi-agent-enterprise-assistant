@@ -26,6 +26,7 @@ GROUNDED_ANSWER = json.dumps(
         "text": "Maternity leave is 14 weeks [parental-leave-policy].",
         "citations": ["parental-leave-policy"],
         "confidence": 0.9,
+        "answer_found": True,
     }
 )
 REVISED_ANSWER = json.dumps(
@@ -33,6 +34,7 @@ REVISED_ANSWER = json.dumps(
         "text": "It is 14 weeks, fully paid [parental-leave-policy].",
         "citations": ["parental-leave-policy"],
         "confidence": 0.9,
+        "answer_found": True,
     }
 )
 SUPPORTED_REVIEW = json.dumps({"supported": True, "reason": "Matches the excerpt."})

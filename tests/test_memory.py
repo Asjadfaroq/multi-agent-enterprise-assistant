@@ -16,7 +16,7 @@ from assistant.guardrails.schema import ProfileFact
 from assistant.memory.profile import PostgresProfileStore, create_user_memory_table
 
 PLAN_WITHOUT_TOOLS = json.dumps({"steps": ["reply"], "needs_tools": []})
-ANSWER = json.dumps({"text": "Noted.", "citations": [], "confidence": 0.9})
+ANSWER = json.dumps({"text": "Noted.", "citations": [], "confidence": 0.9, "answer_found": True})
 SUPPORTED_REVIEW = json.dumps({"supported": True, "reason": "No factual claims."})
 
 

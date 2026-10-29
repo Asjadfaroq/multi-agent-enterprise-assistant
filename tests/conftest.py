@@ -18,6 +18,7 @@ from assistant.config import get_settings
 from assistant.graph.build import build_graph
 from assistant.graph.state import AssistantContext
 from assistant.guardrails.schema import ProfileFact
+from assistant.mcp_server.auth import create_users_table
 from assistant.mcp_server.tools_kb import SearchHit
 
 DB_CONNECT_TIMEOUT_SECONDS = 2
@@ -154,6 +155,7 @@ def connect_or_skip(autocommit: bool) -> psycopg.Connection:
 def committed_users() -> Iterator[Callable[[str, str], None]]:
     """Adds users visible to other connections (the API's) and deletes them afterwards."""
     connection = connect_or_skip(autocommit=True)
+    create_users_table(connection)
     added_user_ids: list[str] = []
 
     def add_user(user_id: str, role: str) -> None:

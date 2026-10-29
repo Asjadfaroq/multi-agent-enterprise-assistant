@@ -1,19 +1,21 @@
 import pytest
 
 from assistant.config import get_settings
-from evals.golden_cases import load_golden_cases
-from evals.results import RESULTS_PATH, EvalResults
+from evals.golden_cases import load_golden_cases, select_cases
+from evals.results import RESULTS_DIR, EvalResults
 
 
 @pytest.fixture(scope="module")
 def results() -> EvalResults:
-    if not RESULTS_PATH.exists():
-        pytest.fail(f"{RESULTS_PATH} is missing; run `uv run python -m evals.run_evals` first")
-    return EvalResults.model_validate_json(RESULTS_PATH.read_text(encoding="utf-8"))
+    results_path = RESULTS_DIR / get_settings().eval_results_file
+    if not results_path.exists():
+        pytest.fail(f"{results_path} is missing; run `uv run python -m evals.run_evals` first")
+    return EvalResults.model_validate_json(results_path.read_text(encoding="utf-8"))
 
 
 def test_results_cover_the_current_golden_set(results: EvalResults) -> None:
-    assert {case.id for case in results.cases} == {case.id for case in load_golden_cases()}
+    expected_cases = select_cases(load_golden_cases(), smoke=results.case_selection == "smoke")
+    assert {case.id for case in results.cases} == {case.id for case in expected_cases}
 
 
 def test_faithfulness_meets_the_threshold(results: EvalResults) -> None:

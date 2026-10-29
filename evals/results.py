@@ -1,6 +1,7 @@
 from collections import defaultdict
 from collections.abc import Iterable
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel
 
@@ -9,7 +10,10 @@ from evals.behaviour import CheckResult
 from evals.judge import JudgeVerdict
 from evals.run_ragas import RagasScores
 
-RESULTS_PATH = PROJECT_ROOT / "evals" / "results" / "latest.json"
+RESULTS_DIR = PROJECT_ROOT / "evals" / "results"
+FULL_RESULTS_PATH = RESULTS_DIR / "latest.json"
+SMOKE_RESULTS_PATH = RESULTS_DIR / "smoke.json"
+CaseSelection = Literal["full", "smoke"]
 
 
 class CaseResult(BaseModel):
@@ -46,8 +50,19 @@ class ScoreSummary(BaseModel):
     key_fact_recall: float | None
 
 
+class RunTimings(BaseModel):
+    graph_seconds: float
+    scoring_seconds: float
+    total_seconds: float
+    cases_run: int
+    cases_from_cache: int
+
+
 class EvalResults(BaseModel):
     run_at: datetime
+    case_selection: CaseSelection
+    code_version: str
+    timings: RunTimings
     agent_model: str
     judge_model: str
     thresholds: dict[str, float]
@@ -113,12 +128,21 @@ def summarise(results: list[CaseResult]) -> ScoreSummary:
     )
 
 
-def build_eval_results(case_results: list[CaseResult], settings: Settings) -> EvalResults:
+def build_eval_results(
+    case_results: list[CaseResult],
+    settings: Settings,
+    case_selection: CaseSelection,
+    code_version: str,
+    timings: RunTimings,
+) -> EvalResults:
     by_category: dict[str, list[CaseResult]] = defaultdict(list)
     for result in case_results:
         by_category[result.category].append(result)
     return EvalResults(
         run_at=datetime.now().astimezone(),
+        case_selection=case_selection,
+        code_version=code_version,
+        timings=timings,
         agent_model=settings.agent_model,
         judge_model=settings.judge_model,
         thresholds={

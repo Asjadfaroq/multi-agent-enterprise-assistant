@@ -25,6 +25,7 @@ class Answer(BaseModel):
     text: str
     citations: list[str]
     confidence: float = Field(ge=0, le=1)
+    answer_found: bool
 
 
 class Review(BaseModel):

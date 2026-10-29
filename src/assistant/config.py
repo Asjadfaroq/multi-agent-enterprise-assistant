@@ -33,7 +33,10 @@ class Settings(BaseSettings):
     search_result_count: int = Field(default=5, gt=0)
     # Vector search fetches this many candidates; the cross-encoder keeps the best k of them.
     reranker_model: str = "cross-encoder/mmarco-mMiniLMv2-L12-H384-v1"
-    rerank_candidate_count: int = Field(default=15, gt=0)
+    rerank_candidate_count: int = Field(default=10, gt=0)
+    # Each question-passage pair is cut to this many tokens: 15 candidates at the model's full
+    # 512 tokens took 2.3 s per search on a 4-core CPU, 10 at 256 take 0.8 s.
+    reranker_max_tokens: int = Field(default=256, gt=0, le=512)
     ticket_list_limit: int = Field(default=20, gt=0)
 
     # Base64-looking runs at least this long are decoded and checked for hidden instructions.
@@ -53,6 +56,10 @@ class Settings(BaseSettings):
     eval_case_min_judge_score: int = Field(default=3, ge=1, le=5)
     eval_arabic_min_letter_ratio: float = Field(default=0.5, ge=0, le=1)
     eval_scoring_concurrency: int = Field(default=4, gt=0)
+    # Golden cases run this many at a time; two cases of the same user never overlap.
+    eval_case_concurrency: int = Field(default=5, gt=0)
+    # Which results file evals/regression_test.py gates: latest.json (full run) or smoke.json.
+    eval_results_file: str = "latest.json"
     # ragas' default of 1024 output tokens cut off statement extraction on longer answers.
     eval_ragas_max_tokens: int = Field(default=8192, gt=0)
 

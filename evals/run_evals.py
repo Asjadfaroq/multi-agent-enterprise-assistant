@@ -1,4 +1,6 @@
+import argparse
 import asyncio
+import time
 
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
@@ -7,32 +9,34 @@ from assistant.graph.build import build_graph, checkpoint_serializer
 from assistant.llm import get_chat_model
 from assistant.observability.tracing import flush_traces
 from evals.behaviour import behaviour_checks, key_fact_recall
-from evals.golden_cases import load_golden_cases
+from evals.case_cache import cache_path, code_fingerprint, load_cached_runs, save_cached_runs
+from evals.golden_cases import (
+    GoldenCase,
+    golden_set_fingerprint,
+    load_golden_cases,
+    select_cases,
+)
 from evals.judge import JudgeVerdict, judge_case
+from evals.report import print_report
 from evals.results import (
-    RESULTS_PATH,
+    FULL_RESULTS_PATH,
+    SMOKE_RESULTS_PATH,
     CaseResult,
-    EvalResults,
+    RunTimings,
     build_eval_results,
     failure_reasons,
 )
-from evals.run_cases import CaseRun, clear_pending_approval_threads, reset_tickets, run_case
+from evals.run_cases import (
+    CaseRun,
+    clear_pending_approval_threads,
+    reset_tickets,
+    run_cases_concurrently,
+)
 from evals.run_ragas import RAGAS_CATEGORIES, RagasMetrics, build_ragas_metrics, score_with_ragas
 
-TABLE_COLUMNS = (
-    "behaviour_pass_rate",
-    "judge_correctness",
-    "judge_grounding",
-    "judge_safety",
-    "faithfulness",
-    "answer_relevancy",
-    "context_precision",
-)
 
-
-async def run_golden_cases() -> list[CaseRun]:
+async def run_golden_cases(cases: list[GoldenCase]) -> list[CaseRun]:
     settings = get_settings()
-    cases = load_golden_cases()
     async with AsyncPostgresSaver.from_conn_string(
         settings.database_url, serde=checkpoint_serializer()
     ) as checkpointer:
@@ -42,13 +46,7 @@ async def run_golden_cases() -> list[CaseRun]:
         cleared = await clear_pending_approval_threads(graph, checkpointer)
         # Flushed so progress shows even when output is redirected to a file.
         print(f"Reset sample tickets and cleared {cleared} pending approval threads", flush=True)
-        runs = []
-        # Cases run one at a time: they share the tickets table and per-user memory.
-        for number, case in enumerate(cases, start=1):
-            run = await run_case(graph, case)
-            print(f"[{number}/{len(cases)}] {case.id} {run.latency_seconds:.1f}s", flush=True)
-            runs.append(run)
-    return runs
+        return await run_cases_concurrently(graph, cases, settings.eval_case_concurrency)
 
 
 async def score_run(run: CaseRun, ragas_metrics: RagasMetrics) -> CaseResult:
@@ -94,33 +92,44 @@ async def score_runs(runs: list[CaseRun]) -> list[CaseResult]:
     return list(await asyncio.gather(*(score_when_free(run) for run in runs)))
 
 
-def format_score(value: float | None) -> str:
-    return "-" if value is None else f"{value:.2f}"
-
-
-def print_report(results: EvalResults) -> None:
-    header = f"{'category':22} {'cases':>5} {'passed':>6} " + " ".join(
-        f"{column[:12]:>12}" for column in TABLE_COLUMNS
+async def main(smoke: bool, ignore_cache: bool) -> None:
+    started = time.perf_counter()
+    cases = select_cases(load_golden_cases(), smoke)
+    code_version = code_fingerprint()
+    run_cache = cache_path(golden_set_fingerprint(), code_version)
+    cached_runs = {} if ignore_cache else load_cached_runs(run_cache)
+    cases_to_run = [case for case in cases if case.id not in cached_runs]
+    print(f"{len(cases) - len(cases_to_run)} of {len(cases)} cases from {run_cache.name}")
+    new_runs = await run_golden_cases(cases_to_run) if cases_to_run else []
+    graph_seconds = time.perf_counter() - started
+    all_runs = cached_runs | {run.case.id: run for run in new_runs}
+    save_cached_runs(run_cache, all_runs)
+    case_results = await score_runs([all_runs[case.id] for case in cases])
+    timings = RunTimings(
+        graph_seconds=graph_seconds,
+        scoring_seconds=time.perf_counter() - started - graph_seconds,
+        total_seconds=time.perf_counter() - started,
+        cases_run=len(cases_to_run),
+        cases_from_cache=len(cases) - len(cases_to_run),
     )
-    print(header)
-    rows = [*results.per_category.items(), ("overall", results.overall)]
-    for category, summary in rows:
-        scores = " ".join(f"{format_score(getattr(summary, c)):>12}" for c in TABLE_COLUMNS)
-        print(f"{category:22} {summary.cases:>5} {summary.passed:>6} {scores}")
-    print("\nFailing cases:")
-    for case in results.cases:
-        if not case.passed:
-            print(f"- {case.id} ({case.user}): " + " | ".join(case.failure_reasons))
-
-
-async def main() -> None:
-    runs = await run_golden_cases()
-    results = build_eval_results(await score_runs(runs), get_settings())
-    RESULTS_PATH.write_text(results.model_dump_json(indent=2), encoding="utf-8")
+    selection = "smoke" if smoke else "full"
+    results = build_eval_results(case_results, get_settings(), selection, code_version, timings)
+    results_path = SMOKE_RESULTS_PATH if smoke else FULL_RESULTS_PATH
+    results_path.write_text(results.model_dump_json(indent=2), encoding="utf-8")
     flush_traces()
     print_report(results)
-    print(f"\nSaved {RESULTS_PATH}")
+    print(f"\nSaved {results_path} in {timings.total_seconds / 60:.1f} min")
+
+
+def parse_arguments() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Run the golden set and score it.")
+    parser.add_argument("--smoke", action="store_true", help="run the 12 smoke cases only")
+    parser.add_argument(
+        "--fresh", action="store_true", help="re-run every case instead of using cached outputs"
+    )
+    return parser.parse_args()
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    arguments = parse_arguments()
+    asyncio.run(main(smoke=arguments.smoke, ignore_cache=arguments.fresh))

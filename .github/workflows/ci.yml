@@ -1,0 +1,112 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+    branches: [main]
+
+env:
+  # Matches DATABASE_URL's default in src/assistant/config.py and the service port below.
+  DATABASE_URL: postgresql://assistant:assistant@localhost:5433/assistant
+
+jobs:
+  lint-and-unit-tests:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: assistant
+          POSTGRES_PASSWORD: assistant
+          POSTGRES_DB: assistant
+        ports: ["5433:5432"]
+        options: >-
+          --health-cmd "pg_isready -U assistant -d assistant"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - run: uv sync --locked
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+      # Unit tests need no API key; the Postgres service lets the database tests run, not skip.
+      - run: uv run pytest
+
+  eval:
+    # Smoke eval on every push to main, full eval plus regression gate on pull requests to main.
+    if: >-
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'pull_request' && github.base_ref == 'main')
+    needs: lint-and-unit-tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    concurrency:
+      group: eval-${{ github.ref }}
+      cancel-in-progress: true
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: assistant
+          POSTGRES_PASSWORD: assistant
+          POSTGRES_DB: assistant
+        ports: ["5433:5432"]
+        options: >-
+          --health-cmd "pg_isready -U assistant -d assistant"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      EVAL_SELECTION: ${{ github.event_name == 'pull_request' && 'full' || 'smoke' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - run: uv sync --locked
+      - name: Cache the embedding and reranker models
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-models-${{ hashFiles('src/assistant/config.py') }}
+          restore-keys: hf-models-
+      - name: Seed users, tickets and the knowledge base
+        run: uv run python -m scripts.seed
+      - name: Create a service token for this job
+        run: |
+          token="$(openssl rand -hex 32)"
+          echo "::add-mask::$token"
+          echo "MCP_SERVICE_TOKEN=$token" >> "$GITHUB_ENV"
+      - name: Start the MCP server
+        run: |
+          nohup uv run assistant-mcp-server > mcp-server.log 2>&1 &
+          for attempt in $(seq 1 90); do
+            if curl -s -o /dev/null http://127.0.0.1:8001/mcp; then exit 0; fi
+            sleep 2
+          done
+          cat mcp-server.log
+          exit 1
+      - name: Run the smoke eval
+        if: env.EVAL_SELECTION == 'smoke'
+        run: uv run python -m evals.run_evals --smoke
+      - name: Gate the smoke eval on behaviour
+        if: env.EVAL_SELECTION == 'smoke'
+        # Twelve cases are too few for stable averages, so only coverage and behaviour gate them.
+        env:
+          EVAL_RESULTS_FILE: smoke.json
+        run: uv run pytest evals/regression_test.py -k "cover or behaviour"
+      - name: Run the full eval
+        if: env.EVAL_SELECTION == 'full'
+        run: uv run python -m evals.run_evals
+      - name: Gate the full eval on every threshold
+        if: env.EVAL_SELECTION == 'full'
+        run: uv run pytest evals/regression_test.py
+      - name: Upload eval results and server log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-${{ env.EVAL_SELECTION }}-results
+          path: |
+            evals/results/*.json
+            mcp-server.log

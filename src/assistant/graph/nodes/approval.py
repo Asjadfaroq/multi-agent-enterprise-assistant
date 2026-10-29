@@ -43,6 +43,7 @@ def permission_refusal(denied_tools: list[str]) -> Answer:
         ),
         citations=[],
         confidence=1.0,
+        answer_found=True,
     )
 
 

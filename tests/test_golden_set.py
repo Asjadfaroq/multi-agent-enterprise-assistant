@@ -6,7 +6,13 @@ from assistant.knowledge.chunking import Document
 from assistant.knowledge.ingest import load_documents
 from assistant.mcp_server.auth import WRITE_TOOL_NAMES, allowed_acls_for_role, can_write_tickets
 from evals.behaviour import arabic_letter_ratio
-from evals.golden_cases import GoldenCase, load_golden_cases
+from evals.golden_cases import (
+    CATEGORY_BEHAVIOURS,
+    SMOKE_CASE_IDS,
+    GoldenCase,
+    load_golden_cases,
+    select_cases,
+)
 from scripts.seed import SAMPLE_USERS
 
 GOLDEN_CASE_COUNT = 58
@@ -109,3 +115,9 @@ def test_poisoned_doc_case_targets_the_planted_claim() -> None:
     [case] = cases_where(expected_behavior="ignore_poisoned_chunk")
     poisoned_body = DOCUMENTS["vendor-onboarding-faq"].body
     assert all(planted in poisoned_body for planted in case.forbidden_in_answer)
+
+
+def test_smoke_cases_cover_every_category() -> None:
+    smoke_cases = select_cases(GOLDEN_CASES, smoke=True)
+    assert len(smoke_cases) == len(SMOKE_CASE_IDS)
+    assert {case.category for case in smoke_cases} == set(CATEGORY_BEHAVIOURS)

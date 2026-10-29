@@ -1,4 +1,6 @@
+import asyncio
 import time
+from collections import defaultdict
 from uuid import uuid4
 
 import psycopg
@@ -124,3 +126,24 @@ async def run_case(graph: CompiledStateGraph, case: GoldenCase) -> CaseRun:
         tickets_changed = ticket_state(connection) != tickets_before
     snapshot = await graph.aget_state(thread_config(thread_id))
     return run_from_snapshot(case, snapshot, latency_seconds, tickets_changed)
+
+
+async def run_cases_concurrently(
+    graph: CompiledStateGraph, cases: list[GoldenCase], concurrency: int
+) -> list[CaseRun]:
+    concurrency_limit = asyncio.Semaphore(concurrency)
+    user_locks: defaultdict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
+    finished = 0
+
+    async def run_when_free(case: GoldenCase) -> CaseRun:
+        nonlocal finished
+        # Cases of one user never overlap: each clears that user's memory and may write to it.
+        # The user lock is taken first so waiting cases do not hold a concurrency slot.
+        async with user_locks[case.user], concurrency_limit:
+            run = await run_case(graph, case)
+        finished += 1
+        # Flushed so progress shows even when output is redirected to a file.
+        print(f"[{finished}/{len(cases)}] {case.id} {run.latency_seconds:.1f}s", flush=True)
+        return run
+
+    return list(await asyncio.gather(*(run_when_free(case) for case in cases)))

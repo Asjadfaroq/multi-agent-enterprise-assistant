@@ -15,7 +15,7 @@ from assistant.graph.state import (
     latest_question,
     messages_since_latest_question,
     pending_tool_calls,
-    planned_write_tools,
+    planned_tools,
 )
 from assistant.guardrails.schema import (
     Answer,
@@ -23,7 +23,6 @@ from assistant.guardrails.schema import (
     json_reply_instructions,
     parse_with_one_retry,
 )
-from assistant.mcp_server.auth import WRITE_TOOL_NAMES
 
 EXECUTOR_INSTRUCTIONS = """\
 You answer an employee's question and can act on the internal tickets system with the tools \
@@ -31,14 +30,15 @@ provided. Use only the document excerpts for facts about the company and the tic
 anything about tickets. Cite document facts as [doc_id] and ticket facts as [ticket-<id>], and \
 list every cited id in "citations". Set "confidence" between 0 and 1 to how completely the \
 excerpts and tool results support the answer.
-If the excerpts and tools do not contain the answer, say you could not find it in what the user \
-can access. Never use outside knowledge about the company. Write the answer in the user's \
-preferred language when it is known. Placeholders such as <SAUDI_ID> or <EMAIL_ADDRESS> mark \
-personal data that was masked before you saw it: ignore them and never mention masked, redacted \
-or personal data in the answer.
+If the excerpts and tool results do not contain the answer, set "answer_found" to false; \
+otherwise set it to true. Never use outside knowledge about the company. Write the answer in the \
+user's preferred language when it is known. Placeholders such as <SAUDI_ID> or <EMAIL_ADDRESS> \
+mark personal data that was masked before you saw it: ignore them and never mention masked, \
+redacted or personal data in the answer.
 Call tools when you need them. Once a change to a ticket has run, report its result instead of \
 proposing it again. When you are done, reply with the final answer as JSON."""
 
+NOT_FOUND_ANSWER = "I couldn't find this in the documents you have access to."
 INVALID_ANSWER_FALLBACK = (
     "Sorry, I could not produce a reliable answer this time. Please try asking again."
 )
@@ -59,13 +59,11 @@ def make_executor_node(llm: BaseChatModel) -> Node:
         denied_tools = denied_write_tools(state, set(runtime.context.tools_by_name))
         if denied_tools:
             return {"answer": permission_refusal(denied_tools)}
-        # Search is the retriever's job, and write tools are offered only when the plan says the
-        # user asked for a change.
-        allowed_writes = planned_write_tools(state)
+        # Search is the retriever's job; ticket tools are offered only when the plan asked for them,
+        # so a question the documents cannot answer never sets off a ticket lookup.
+        allowed_tools = planned_tools(state) - {SEARCH_TOOL_NAME}
         ticket_tools = [
-            tool
-            for name, tool in runtime.context.tools_by_name.items()
-            if name != SEARCH_TOOL_NAME and (name not in WRITE_TOOL_NAMES or name in allowed_writes)
+            tool for name, tool in runtime.context.tools_by_name.items() if name in allowed_tools
         ]
         tool_calling_llm = llm.bind_tools(ticket_tools)
         # The turn's history is only ever appended to: Claude signs its thinking blocks against
@@ -83,9 +81,17 @@ def make_executor_node(llm: BaseChatModel) -> Node:
         except InvalidModelOutputError:
             # Fail closed: an answer that is still malformed after one retry is never shown.
             return {"answer": None, "messages": [AIMessage(INVALID_ANSWER_FALLBACK)]}
+        if not answer.answer_found:
+            # A fixed reply: models padded "not found" with guesses about whom to ask and with
+            # citations of documents that did not contain the answer.
+            return {"answer": not_found_answer()}
         return {"answer": answer}
 
     return answer_or_call_tools
+
+
+def not_found_answer() -> Answer:
+    return Answer(text=NOT_FOUND_ANSWER, citations=[], confidence=1.0, answer_found=False)
 
 
 async def run_tool_calls(state: AgentState, runtime: Runtime[AssistantContext]) -> StateUpdate:

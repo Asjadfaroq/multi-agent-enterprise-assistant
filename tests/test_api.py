@@ -32,7 +32,12 @@ SCRIPTED_REPLIES = [
         ],
     ),
     json.dumps(
-        {"text": "Created ticket 1 [ticket-1].", "citations": ["ticket-1"], "confidence": 0.9}
+        {
+            "text": "Created ticket 1 [ticket-1].",
+            "citations": ["ticket-1"],
+            "confidence": 0.9,
+            "answer_found": True,
+        }
     ),
     json.dumps({"supported": True, "reason": "Matches the tool result."}),
     NO_PROFILE_FACTS,

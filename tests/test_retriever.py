@@ -15,7 +15,7 @@ from assistant.mcp_server.tools_kb import SearchHit, keep_best_ranked
 
 RESULT_COUNT = get_settings().search_result_count
 PLAN_WITH_SEARCH = json.dumps({"steps": ["search"], "needs_tools": ["search_documents"]})
-ANSWER = json.dumps({"text": "Answer.", "citations": [], "confidence": 0.9})
+ANSWER = json.dumps({"text": "Answer.", "citations": [], "confidence": 0.9, "answer_found": True})
 SUPPORTED_REVIEW = json.dumps({"supported": True, "reason": "Grounded."})
 
 
