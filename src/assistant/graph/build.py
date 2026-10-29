@@ -17,7 +17,8 @@ from assistant.graph.edges import (
     route_after_planner,
     route_after_review,
 )
-from assistant.graph.nodes.executor import make_executor_node, request_approval, run_tool_calls
+from assistant.graph.nodes.approval import request_approval
+from assistant.graph.nodes.executor import make_executor_node, run_tool_calls
 from assistant.graph.nodes.planner import make_planner_node
 from assistant.graph.nodes.retriever import make_retriever_node
 from assistant.graph.nodes.reviewer import make_reviewer_node

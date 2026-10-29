@@ -38,6 +38,7 @@ class ScriptedChatModel(GenericFakeChatModel):
     """Replays fixed replies in order and records every prompt; bound tools are ignored."""
 
     received_prompts: list[list[BaseMessage]] = Field(default_factory=list)
+    bound_tool_names: list[list[str]] = Field(default_factory=list)
 
     def _generate(
         self,
@@ -52,6 +53,7 @@ class ScriptedChatModel(GenericFakeChatModel):
     def bind_tools(
         self, tools: Sequence[Any], *, tool_choice: str | None = None, **kwargs: Any
     ) -> Runnable:
+        self.bound_tool_names.append([tool.name for tool in tools])
         return self
 
 

@@ -1,8 +1,8 @@
 import httpx
 import psycopg
-from seed import reset_sample_tickets
 
 from assistant.config import get_settings
+from scripts.seed import reset_sample_tickets
 
 APPROVER_ID = "lina"
 # The model, MCP server and reviewer together can take tens of seconds on one turn.

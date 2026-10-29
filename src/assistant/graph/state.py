@@ -97,6 +97,11 @@ def completed_write_actions(state: AgentState) -> list[str]:
     ]
 
 
+def planned_write_tools(state: AgentState) -> set[str]:
+    plan = state["plan"]
+    return WRITE_TOOL_NAMES & set(plan.needs_tools) if plan is not None else set()
+
+
 def pending_tool_calls(state: AgentState) -> list[ToolCall]:
     last_message = state["messages"][-1]
     return list(last_message.tool_calls) if isinstance(last_message, AIMessage) else []

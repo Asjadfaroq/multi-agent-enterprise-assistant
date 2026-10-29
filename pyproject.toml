@@ -42,6 +42,10 @@ dev = [
 requires = ["uv_build>=0.13.1,<0.14.0"]
 build-backend = "uv_build"
 
+[tool.uv]
+# ragas 0.4.3 imports langchain_community.chat_models.vertexai, removed in langchain-community 0.4.2.
+constraint-dependencies = ["langchain-community<0.4.2"]
+
 # The default torch wheel bundles CUDA (several GB); embeddings here are small enough for CPU.
 [tool.uv.sources]
 torch = { index = "pytorch-cpu" }
@@ -60,3 +64,5 @@ select = ["E", "F", "I", "B", "UP", "SIM", "N"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# `scripts` and `evals` are importable packages run with `python -m` from the project root.
+pythonpath = ["."]

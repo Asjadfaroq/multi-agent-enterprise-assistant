@@ -1,16 +1,17 @@
 import asyncio
 import json
 
-from conftest import NO_PROFILE_FACTS, FakeToolbox, GraphBuilder
+from conftest import NO_PROFILE_FACTS, FakeToolbox, GraphBuilder, scripted_model_after_safe_input
 from langchain_core.messages import AIMessage, ToolMessage
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import Command, StateSnapshot
 
-from assistant.graph.build import checkpoint_serializer
-from assistant.graph.nodes.executor import (
+from assistant.graph.build import build_graph, checkpoint_serializer
+from assistant.graph.nodes.approval import (
     CANCELLED_ANSWER,
     REJECTED_ACTION_MESSAGE,
+    UNREQUESTED_WRITE_MESSAGE,
     WRITE_ALREADY_DONE_MESSAGE,
 )
 from assistant.graph.state import AssistantContext, new_turn_state
@@ -158,3 +159,31 @@ def test_viewer_cannot_reach_a_write_tool_even_if_the_model_calls_one(
     assert thread_snapshot(graph).interrupts == ()
     assert refusal.status == "error" and "not available" in refusal.text
     assert toolbox.created_tickets == []
+
+
+def test_write_the_user_did_not_ask_for_is_refused_without_a_pause(
+    build_scripted_graph: GraphBuilder, toolbox: FakeToolbox
+) -> None:
+    replies = [PLAN_TICKET_READ, CREATE_TICKET_CALL, *ACCEPTED_ANSWER_REPLIES]
+    graph = checkpointed_graph(build_scripted_graph, replies)
+
+    start_turn(graph, toolbox.context(can_write_tickets=True))
+
+    assert thread_snapshot(graph).interrupts == ()
+    assert [message.text for message in tool_messages(graph)] == [UNREQUESTED_WRITE_MESSAGE]
+    assert toolbox.created_tickets == []
+
+
+def test_write_tools_are_offered_only_when_the_plan_asks_for_a_change(
+    toolbox: FakeToolbox,
+) -> None:
+    read_only_model = scripted_model_after_safe_input([PLAN_TICKET_READ, *ACCEPTED_ANSWER_REPLIES])
+    write_model = scripted_model_after_safe_input(
+        [PLAN_TICKET_WRITE, CREATE_TICKET_CALL, *ACCEPTED_ANSWER_REPLIES]
+    )
+    for model in (read_only_model, write_model):
+        graph = build_graph(lambda role, model=model: model, InMemorySaver())
+        start_turn(graph, toolbox.context(can_write_tickets=True))
+
+    assert "create_ticket" not in read_only_model.bound_tool_names[0]
+    assert "create_ticket" in write_model.bound_tool_names[0]

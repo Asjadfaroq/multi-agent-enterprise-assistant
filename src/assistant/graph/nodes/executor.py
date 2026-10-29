@@ -1,17 +1,6 @@
-from typing import Any, Literal
-
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import (
-    AIMessage,
-    HumanMessage,
-    SystemMessage,
-    ToolCall,
-    ToolMessage,
-)
-from langgraph.graph import END
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langgraph.runtime import Runtime
-from langgraph.types import Command, interrupt
-from pydantic import BaseModel
 
 from assistant.graph.nodes.retriever import SEARCH_TOOL_NAME
 from assistant.graph.state import (
@@ -19,12 +8,12 @@ from assistant.graph.state import (
     AssistantContext,
     Node,
     StateUpdate,
-    completed_write_actions,
     format_retrieved_context,
     format_user_profile,
     latest_question,
     messages_since_latest_question,
     pending_tool_calls,
+    planned_write_tools,
 )
 from assistant.guardrails.schema import (
     Answer,
@@ -46,19 +35,9 @@ preferred language when it is known.
 Call tools when you need them. Once a change to a ticket has run, report its result instead of \
 proposing it again. When you are done, reply with the final answer as JSON."""
 
-REJECTED_ACTION_MESSAGE = "The approver rejected this action, so nothing was changed."
-WRITE_ALREADY_DONE_MESSAGE = (
-    "Not run: an approved change already ran in this turn. Report its result to the user."
-)
-CANCELLED_ANSWER = "The approver rejected {tools}, so nothing was changed."
 INVALID_ANSWER_FALLBACK = (
     "Sorry, I could not produce a reliable answer this time. Please try asking again."
 )
-
-
-class ProposedToolCall(BaseModel):
-    tool: str
-    args: dict[str, Any]
 
 
 def build_executor_prompt(state: AgentState) -> str:
@@ -73,9 +52,13 @@ def make_executor_node(llm: BaseChatModel) -> Node:
     async def answer_or_call_tools(
         state: AgentState, runtime: Runtime[AssistantContext]
     ) -> StateUpdate:
-        # Search is the retriever's job; the executor only gets the ticket tools.
+        # Search is the retriever's job, and write tools are offered only when the plan says the
+        # user asked for a change.
+        allowed_writes = planned_write_tools(state)
         ticket_tools = [
-            tool for name, tool in runtime.context.tools_by_name.items() if name != SEARCH_TOOL_NAME
+            tool
+            for name, tool in runtime.context.tools_by_name.items()
+            if name != SEARCH_TOOL_NAME and (name not in WRITE_TOOL_NAMES or name in allowed_writes)
         ]
         tool_calling_llm = llm.bind_tools(ticket_tools)
         # The turn's history is only ever appended to: Claude signs its thinking blocks against
@@ -96,43 +79,6 @@ def make_executor_node(llm: BaseChatModel) -> Node:
         return {"answer": answer}
 
     return answer_or_call_tools
-
-
-def refuse_tool_calls(calls: list[ToolCall], reason: str) -> list[ToolMessage]:
-    return [
-        ToolMessage(reason, tool_call_id=call["id"], name=call["name"], status="error")
-        for call in calls
-    ]
-
-
-async def request_approval(
-    state: AgentState, runtime: Runtime[AssistantContext]
-) -> Command[Literal["run_tools", "executor", "__end__"]]:
-    calls = pending_tool_calls(state)
-    # One approved write per turn: in a live run the model re-proposed the write it had just made,
-    # which would have created a duplicate ticket.
-    if completed_write_actions(state):
-        return Command(
-            goto="executor",
-            update={"messages": refuse_tool_calls(calls, WRITE_ALREADY_DONE_MESSAGE)},
-        )
-    # A write the user's session does not expose fails in run_tools without bothering an
-    # approver, so roles without write access never reach a pause or a write tool.
-    proposed_action = [
-        ProposedToolCall(tool=call["name"], args=call["args"])
-        for call in calls
-        if call["name"] in WRITE_TOOL_NAMES and call["name"] in runtime.context.tools_by_name
-    ]
-    if not proposed_action:
-        return Command(goto="run_tools")
-    approved = interrupt({"proposed_action": [call.model_dump() for call in proposed_action]})
-    if approved is True:
-        return Command(goto="run_tools")
-    # A rejection ends the turn without asking the model again, so it cannot re-propose the write.
-    rejections = refuse_tool_calls(calls, REJECTED_ACTION_MESSAGE)
-    rejected_tools = ", ".join(call.tool for call in proposed_action)
-    cancellation = AIMessage(CANCELLED_ANSWER.format(tools=rejected_tools))
-    return Command(goto=END, update={"messages": [*rejections, cancellation]})
 
 
 async def run_tool_calls(state: AgentState, runtime: Runtime[AssistantContext]) -> StateUpdate:

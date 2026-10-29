@@ -21,8 +21,11 @@ Available tools:
 
 List the steps needed to answer and the tools those steps need. Use search_documents for any \
 question about the company, its policies, products or systems, and the ticket tools for \
-anything about tickets. Use no tools for greetings or small talk. Take what is known about the \
-user into account, for example by planning to answer in their preferred language."""
+anything about tickets. Plan create_ticket or update_ticket only when the user explicitly asks \
+to create or change a ticket; a question about tickets, customers or vendors, or about what to \
+tell someone, asks for information and needs read tools or search only. Use no tools for \
+greetings or small talk. Take what is known about the user into account, for example by planning \
+to answer in their preferred language."""
 
 
 def make_planner_node(llm: BaseChatModel) -> Node:

@@ -9,7 +9,7 @@ from langgraph.types import StateSnapshot
 from pydantic import BaseModel
 
 from assistant.config import get_settings
-from assistant.graph.nodes.executor import ProposedToolCall
+from assistant.graph.nodes.approval import ProposedToolCall
 from assistant.mcp_server.auth import Role
 from assistant.observability.tracing import tracing_config
 

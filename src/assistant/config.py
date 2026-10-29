@@ -40,6 +40,15 @@ class Settings(BaseSettings):
 
     sample_docs_dir: Path = PROJECT_ROOT / "data" / "sample_docs"
 
+    # Gates for evals/regression_test.py; a case also fails if any judge score is below the floor.
+    eval_min_faithfulness: float = Field(default=0.85, ge=0, le=1)
+    eval_min_context_precision: float = Field(default=0.80, ge=0, le=1)
+    eval_min_judge_mean: float = Field(default=4.0, ge=1, le=5)
+    eval_min_behaviour_pass_rate: float = Field(default=1.0, ge=0, le=1)
+    eval_case_min_judge_score: int = Field(default=3, ge=1, le=5)
+    eval_arabic_min_letter_ratio: float = Field(default=0.5, ge=0, le=1)
+    eval_scoring_concurrency: int = Field(default=4, gt=0)
+
     langfuse_public_key: str = ""
     langfuse_secret_key: str = ""
     langfuse_host: str = "http://localhost:3000"
