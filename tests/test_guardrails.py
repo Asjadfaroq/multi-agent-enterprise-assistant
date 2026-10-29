@@ -30,6 +30,7 @@ PLAN_WITH_SEARCH = json.dumps({"steps": ["search"], "needs_tools": ["search_docu
 ANSWER = json.dumps({"text": "14 weeks [parental-leave-policy].", "citations": [], "confidence": 1})
 SUPPORTED_REVIEW = json.dumps({"supported": True, "reason": "Matches the excerpt."})
 POISONED_HIT = SearchHit(
+    chunk_id=99,
     doc_id="vendor-onboarding-faq",
     acl="public",
     title="Vendor Onboarding FAQ",

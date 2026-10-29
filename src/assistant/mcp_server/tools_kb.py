@@ -12,6 +12,7 @@ from assistant.mcp_server.auth import allowed_acls_for_user, caller_user_id
 
 
 class SearchHit(BaseModel):
+    chunk_id: int
     doc_id: str
     acl: Acl
     title: str
@@ -26,7 +27,7 @@ def search_chunks(
     connection.execute("SET LOCAL hnsw.iterative_scan = strict_order")
     rows = connection.execute(
         """
-        SELECT doc_id, acl, metadata->>'title', content, 1 - (embedding <=> %(query)s)
+        SELECT id, doc_id, acl, metadata->>'title', content, 1 - (embedding <=> %(query)s)
         FROM chunks
         WHERE acl = ANY(%(allowed_acls)s)
         ORDER BY embedding <=> %(query)s
@@ -35,8 +36,10 @@ def search_chunks(
         {"query": query_embedding, "allowed_acls": allowed_acls, "k": k},
     ).fetchall()
     return [
-        SearchHit(doc_id=doc_id, acl=acl, title=title, content=content, score=score)
-        for doc_id, acl, title, content, score in rows
+        SearchHit(
+            chunk_id=chunk_id, doc_id=doc_id, acl=acl, title=title, content=content, score=score
+        )
+        for chunk_id, doc_id, acl, title, content, score in rows
     ]
 
 

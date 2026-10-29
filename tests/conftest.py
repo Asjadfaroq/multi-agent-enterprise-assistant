@@ -25,6 +25,7 @@ NO_PROFILE_FACTS = json.dumps({"facts": []})
 SAFE_INPUT_VERDICT = json.dumps({"is_injection": False, "reason": "Ordinary request."})
 NO_POISONED_CHUNKS = json.dumps({"flagged": []})
 LEAVE_POLICY_HIT = SearchHit(
+    chunk_id=1,
     doc_id="parental-leave-policy",
     acl="hr",
     title="Parental Leave Policy",
@@ -75,9 +76,9 @@ class FakeToolbox:
         self.created_tickets: list[dict[str, Any]] = []
         self.profile_store = InMemoryProfileStore()
 
-    async def search_documents(self, query: str) -> tuple[str, dict[str, Any]]:
+    async def search_documents(self, query: str, k: int) -> tuple[str, dict[str, Any]]:
         self.search_queries.append(query)
-        hits = [hit.model_dump() for hit in self.search_hits]
+        hits = [hit.model_dump() for hit in self.search_hits[:k]]
         return str(hits), {"structured_content": {"result": hits}}
 
     async def list_tickets(self) -> str:

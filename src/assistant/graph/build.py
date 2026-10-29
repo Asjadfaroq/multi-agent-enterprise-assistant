@@ -59,7 +59,10 @@ def build_graph(
     graph = StateGraph(AgentState, context_schema=AssistantContext)
     graph.add_node("guard_input", make_input_guard_node(agent_llm, encoded_payload_min_length))
     graph.add_node("planner", make_planner_node(agent_llm))
-    graph.add_node("retriever", make_retriever_node(agent_llm, encoded_payload_min_length))
+    graph.add_node(
+        "retriever",
+        make_retriever_node(agent_llm, settings.search_result_count, encoded_payload_min_length),
+    )
     graph.add_node("executor", make_executor_node(agent_llm))
     graph.add_node("request_approval", request_approval)
     graph.add_node("run_tools", run_tool_calls)
