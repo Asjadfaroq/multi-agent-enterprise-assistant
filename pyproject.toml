@@ -1,0 +1,59 @@
+[project]
+name = "assistant"
+version = "0.1.0"
+description = "Internal enterprise assistant: LangGraph agents over a permissioned pgvector knowledge base and a tickets API."
+authors = [
+    { name = "Aajadfaroq", email = "asjadfarooq22@gmail.com" }
+]
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "fastapi",
+    "langchain-anthropic",
+    "langchain-core",
+    "langchain-mcp-adapters",
+    "langfuse",
+    "langgraph",
+    "langgraph-checkpoint-postgres",
+    "mcp",
+    "numpy",
+    "pgvector",
+    "presidio-analyzer",
+    "psycopg[binary]",
+    "pydantic",
+    "pydantic-settings",
+    "python-frontmatter",
+    "ragas",
+    "sentence-transformers",
+    "sqlalchemy",
+    "torch",
+    "uvicorn",
+]
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "ruff",
+]
+
+[build-system]
+requires = ["uv_build>=0.13.1,<0.14.0"]
+build-backend = "uv_build"
+
+# The default torch wheel bundles CUDA (several GB); embeddings here are small enough for CPU.
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM", "N"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
