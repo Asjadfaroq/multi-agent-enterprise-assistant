@@ -1,5 +1,5 @@
 from collections.abc import AsyncIterator, Callable
-from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from contextlib import asynccontextmanager
 
 from langchain_core.language_models import BaseChatModel
 from langchain_mcp_adapters.client import MultiServerMCPClient
@@ -11,25 +11,34 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
 from assistant.config import get_settings
-from assistant.graph.edges import route_after_executor, route_after_planner, route_after_review
+from assistant.graph.edges import (
+    route_after_executor,
+    route_after_input_guard,
+    route_after_planner,
+    route_after_review,
+)
 from assistant.graph.nodes.executor import make_executor_node, request_approval, run_tool_calls
 from assistant.graph.nodes.planner import make_planner_node
-from assistant.graph.nodes.retriever import retrieve_documents
+from assistant.graph.nodes.retriever import make_retriever_node
 from assistant.graph.nodes.reviewer import make_reviewer_node
 from assistant.graph.state import AgentState, AssistantContext
-from assistant.guardrails.schema import Draft, Plan, ProfileFact, Review
+from assistant.guardrails.injection import make_input_guard_node
+from assistant.guardrails.schema import Answer, Plan, ProfileFact, Review
 from assistant.llm import ModelRole, get_chat_model
-from assistant.mcp_server.auth import CALLER_HEADER
+from assistant.mcp_server.auth import (
+    CALLER_HEADER,
+    configured_service_token,
+    service_authorization_header,
+)
 from assistant.mcp_server.tools_kb import SearchHit
 from assistant.memory.profile import PostgresProfileStore, make_memory_node
 
 ChatModelFactory = Callable[[ModelRole], BaseChatModel]
-AssistantContextOpener = Callable[[str], AbstractAsyncContextManager[AssistantContext]]
 
 ASSISTANT_SERVER_NAME = "assistant"
 
 # LangGraph only restores checkpointed classes it has been told to trust.
-CHECKPOINTED_MODELS = (Plan, Draft, Review, SearchHit, ProfileFact)
+CHECKPOINTED_MODELS = (Plan, Answer, Review, SearchHit, ProfileFact)
 
 
 def checkpoint_serializer() -> JsonPlusSerializer:
@@ -46,15 +55,18 @@ def build_graph(
 ) -> CompiledStateGraph:
     settings = get_settings()
     agent_llm = chat_model_factory("agent")
+    encoded_payload_min_length = settings.injection_encoded_payload_min_length
     graph = StateGraph(AgentState, context_schema=AssistantContext)
+    graph.add_node("guard_input", make_input_guard_node(agent_llm, encoded_payload_min_length))
     graph.add_node("planner", make_planner_node(agent_llm))
-    graph.add_node("retriever", retrieve_documents)
+    graph.add_node("retriever", make_retriever_node(agent_llm, encoded_payload_min_length))
     graph.add_node("executor", make_executor_node(agent_llm))
     graph.add_node("request_approval", request_approval)
     graph.add_node("run_tools", run_tool_calls)
     graph.add_node("reviewer", make_reviewer_node(agent_llm, settings.max_review_revisions))
     graph.add_node("remember", make_memory_node(agent_llm, settings.max_profile_facts_per_turn))
-    graph.add_edge(START, "planner")
+    graph.add_edge(START, "guard_input")
+    graph.add_conditional_edges("guard_input", route_after_input_guard)
     graph.add_conditional_edges("planner", route_after_planner)
     graph.add_edge("retriever", "executor")
     graph.add_conditional_edges("executor", route_after_executor)
@@ -68,7 +80,10 @@ def assistant_server_connection(user_id: str) -> StreamableHttpConnection:
     return {
         "transport": "streamable_http",
         "url": get_settings().mcp_server_url,
-        "headers": {CALLER_HEADER: user_id},
+        "headers": {
+            CALLER_HEADER: user_id,
+            "Authorization": service_authorization_header(configured_service_token()),
+        },
     }
 
 

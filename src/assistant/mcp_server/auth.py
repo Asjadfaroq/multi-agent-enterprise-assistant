@@ -1,9 +1,11 @@
+import hmac
 from collections.abc import Mapping
 from typing import Literal, cast
 
 import psycopg
 from mcp.server.fastmcp import Context
 
+from assistant.config import get_settings
 from assistant.knowledge.chunking import Acl
 
 Role = Literal["viewer", "agent", "engineer", "hr_manager", "manager"]
@@ -21,12 +23,30 @@ TICKET_WRITER_ROLES: frozenset[Role] = frozenset({"agent", "manager"})
 DOCUMENT_INGEST_ROLES: frozenset[Role] = frozenset({"manager"})
 
 # Set by the API from its own authenticated caller; the model never supplies it. The MCP server
-# trusts it because it only listens where the API can reach it.
+# trusts it only on requests that also carry the shared service token.
 CALLER_HEADER = "X-User"
+SERVICE_TOKEN_SCHEME = "Bearer"
 
 
 def create_users_table(connection: psycopg.Connection) -> None:
     connection.execute("CREATE TABLE IF NOT EXISTS users (id text PRIMARY KEY, role text NOT NULL)")
+
+
+def configured_service_token() -> str:
+    token = get_settings().mcp_service_token.get_secret_value()
+    if not token:
+        raise ValueError("MCP_SERVICE_TOKEN is not set; add it to .env for the API and MCP server")
+    return token
+
+
+def service_authorization_header(token: str) -> str:
+    return f"{SERVICE_TOKEN_SCHEME} {token}"
+
+
+def is_valid_service_authorization(authorization_header: str | None, expected_token: str) -> bool:
+    expected_header = service_authorization_header(expected_token)
+    # Constant-time comparison so response timing does not leak how much of the token matched.
+    return hmac.compare_digest((authorization_header or "").encode(), expected_header.encode())
 
 
 def user_id_from_headers(headers: Mapping[str, str]) -> str:

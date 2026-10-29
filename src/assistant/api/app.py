@@ -1,20 +1,25 @@
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
-from typing import Annotated, Literal
+from typing import Annotated
 from uuid import uuid4
 
 import psycopg
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
-from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.graph.state import CompiledStateGraph
-from langgraph.types import Command, StateSnapshot
+from langgraph.types import Command
 from pydantic import BaseModel
 
+from assistant.api.threads import (
+    ChatResponse,
+    exclusive_approval,
+    response_for_thread,
+    thread_config,
+    traced_thread_config,
+)
 from assistant.config import get_settings
 from assistant.graph.build import build_graph, checkpoint_serializer, open_assistant_context
-from assistant.graph.nodes.executor import ProposedToolCall
 from assistant.graph.state import new_turn_state
 from assistant.knowledge.ingest import ingest_documents
 from assistant.mcp_server.auth import (
@@ -24,7 +29,7 @@ from assistant.mcp_server.auth import (
     require_ticket_write_permission,
     role_for_user,
 )
-from assistant.observability.tracing import flush_traces, trace_attributes, tracing_config
+from assistant.observability.tracing import flush_traces, trace_attributes
 
 UserIdHeader = Annotated[str, Header(alias=CALLER_HEADER)]
 
@@ -36,13 +41,6 @@ class ChatRequest(BaseModel):
 
 class ApprovalRequest(BaseModel):
     approved: bool
-
-
-class ChatResponse(BaseModel):
-    status: Literal["answered", "awaiting_approval"]
-    thread_id: str
-    answer: str | None = None
-    proposed_action: list[ProposedToolCall] = []
 
 
 class IngestResponse(BaseModel):
@@ -69,14 +67,6 @@ async def refuse_forbidden_request(request: Request, error: PermissionError) -> 
     return JSONResponse(status_code=403, content={"detail": str(error)})
 
 
-def thread_config(thread_id: str) -> RunnableConfig:
-    return {"configurable": {"thread_id": thread_id}}
-
-
-def traced_thread_config(thread_id: str, user_id: str, role: Role) -> RunnableConfig:
-    return {**thread_config(thread_id), **tracing_config(user_id, role, thread_id)}
-
-
 def role_in_database(user_id: str) -> Role:
     with psycopg.connect(get_settings().database_url) as connection:
         return role_for_user(connection, user_id)
@@ -85,34 +75,6 @@ def role_in_database(user_id: str) -> Role:
 def require_in_database(check: Callable[[psycopg.Connection, str], None], user_id: str) -> None:
     with psycopg.connect(get_settings().database_url) as connection:
         check(connection, user_id)
-
-
-@asynccontextmanager
-async def exclusive_approval(thread_id: str) -> AsyncIterator[None]:
-    # The advisory lock lives in Postgres, so it also holds across several API workers.
-    async with await psycopg.AsyncConnection.connect(
-        get_settings().database_url, autocommit=True
-    ) as connection:
-        lock_key = "hashtextextended(%s, 0)"
-        cursor = await connection.execute(f"SELECT pg_try_advisory_lock({lock_key})", (thread_id,))
-        (acquired,) = await cursor.fetchone()
-        if not acquired:
-            raise HTTPException(409, f"Thread {thread_id} is already being approved or rejected")
-        try:
-            yield
-        finally:
-            await connection.execute(f"SELECT pg_advisory_unlock({lock_key})", (thread_id,))
-
-
-def response_for_thread(thread_id: str, snapshot: StateSnapshot) -> ChatResponse:
-    if snapshot.interrupts:
-        return ChatResponse(
-            status="awaiting_approval",
-            thread_id=thread_id,
-            proposed_action=snapshot.interrupts[0].value["proposed_action"],
-        )
-    answer = snapshot.values["messages"][-1].text
-    return ChatResponse(status="answered", thread_id=thread_id, answer=answer)
 
 
 @app.post("/chat")

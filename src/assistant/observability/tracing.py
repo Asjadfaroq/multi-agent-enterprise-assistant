@@ -1,12 +1,13 @@
 from contextlib import AbstractContextManager, nullcontext
 from functools import lru_cache
 
-from langchain_core.runnables import RunnableConfig
+from langchain_core.runnables import RunnableConfig, RunnableLambda
 from langfuse import Langfuse, propagate_attributes
 from langfuse.langchain import CallbackHandler
 from langfuse.span_filter import is_langfuse_span
 
 from assistant.config import get_settings
+from assistant.guardrails.pii import mask_pii_in_data
 
 
 def is_tracing_enabled() -> bool:
@@ -21,6 +22,8 @@ def get_langfuse_client() -> Langfuse:
         public_key=settings.langfuse_public_key,
         secret_key=settings.langfuse_secret_key,
         host=settings.langfuse_host,
+        # A last line of defence: anything a trace records is PII-masked before it is exported.
+        mask=mask_pii_in_data,
         # The Anthropic SDK emits its own span per request; exporting it next to the LangChain
         # generation would count every call's tokens and cost twice.
         should_export_span=is_langfuse_span,
@@ -48,6 +51,15 @@ def trace_attributes(user_id: str, role: str, thread_id: str) -> AbstractContext
     return propagate_attributes(
         user_id=user_id, session_id=thread_id, tags=[f"role:{role}"], metadata={"role": role}
     )
+
+
+async def record_guardrail_event(tag: str, detail: str, config: RunnableConfig) -> None:
+    """Adds a span named after the guardrail to the current trace and tags the trace with it."""
+    marker = RunnableLambda(lambda event_detail: event_detail, name=tag)
+    # The tag is propagated to the marker span, which belongs to the node's trace.
+    tagging = propagate_attributes(tags=[tag]) if is_tracing_enabled() else nullcontext()
+    with tagging:
+        await marker.ainvoke(detail, config)
 
 
 def flush_traces() -> None:

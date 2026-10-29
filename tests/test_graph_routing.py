@@ -2,7 +2,13 @@ import asyncio
 import itertools
 import json
 
-from conftest import NO_PROFILE_FACTS, FakeToolbox, GraphBuilder, ScriptedChatModel
+from conftest import (
+    NO_POISONED_CHUNKS,
+    NO_PROFILE_FACTS,
+    FakeToolbox,
+    GraphBuilder,
+    scripted_model_after_safe_input,
+)
 from langchain_core.messages import AIMessage
 
 from assistant.graph.build import build_graph
@@ -15,16 +21,18 @@ PLAN_WITH_SEARCH = json.dumps(
     {"steps": ["search leave policy"], "needs_tools": ["search_documents"]}
 )
 PLAN_WITHOUT_TOOLS = json.dumps({"steps": ["greet the user"], "needs_tools": []})
-GROUNDED_DRAFT = json.dumps(
+GROUNDED_ANSWER = json.dumps(
     {
         "text": "Maternity leave is 14 weeks [parental-leave-policy].",
         "citations": ["parental-leave-policy"],
+        "confidence": 0.9,
     }
 )
-REVISED_DRAFT = json.dumps(
+REVISED_ANSWER = json.dumps(
     {
         "text": "It is 14 weeks, fully paid [parental-leave-policy].",
         "citations": ["parental-leave-policy"],
+        "confidence": 0.9,
     }
 )
 SUPPORTED_REVIEW = json.dumps({"supported": True, "reason": "Matches the excerpt."})
@@ -55,11 +63,17 @@ def run_graph(
 def test_company_question_is_planned_retrieved_drafted_and_reviewed(
     build_scripted_graph: GraphBuilder, toolbox: FakeToolbox
 ) -> None:
-    replies = [PLAN_WITH_SEARCH, GROUNDED_DRAFT, SUPPORTED_REVIEW, NO_PROFILE_FACTS]
+    replies = [
+        PLAN_WITH_SEARCH,
+        NO_POISONED_CHUNKS,
+        GROUNDED_ANSWER,
+        SUPPORTED_REVIEW,
+        NO_PROFILE_FACTS,
+    ]
 
     visited, answer = run_graph(build_scripted_graph, toolbox, replies)
 
-    assert visited == ["planner", "retriever", "executor", "reviewer", "remember"]
+    assert visited == ["guard_input", "planner", "retriever", "executor", "reviewer", "remember"]
     assert answer == "Maternity leave is 14 weeks [parental-leave-policy]."
     assert toolbox.search_queries == [QUESTION]
 
@@ -67,11 +81,11 @@ def test_company_question_is_planned_retrieved_drafted_and_reviewed(
 def test_small_talk_skips_document_search(
     build_scripted_graph: GraphBuilder, toolbox: FakeToolbox
 ) -> None:
-    replies = [PLAN_WITHOUT_TOOLS, GROUNDED_DRAFT, SUPPORTED_REVIEW, NO_PROFILE_FACTS]
+    replies = [PLAN_WITHOUT_TOOLS, GROUNDED_ANSWER, SUPPORTED_REVIEW, NO_PROFILE_FACTS]
 
     visited, _ = run_graph(build_scripted_graph, toolbox, replies)
 
-    assert visited == ["planner", "executor", "reviewer", "remember"]
+    assert visited == ["guard_input", "planner", "executor", "reviewer", "remember"]
     assert toolbox.search_queries == []
 
 
@@ -80,9 +94,10 @@ def test_unsupported_draft_is_revised_once_then_accepted(
 ) -> None:
     replies = [
         PLAN_WITH_SEARCH,
-        GROUNDED_DRAFT,
+        NO_POISONED_CHUNKS,
+        GROUNDED_ANSWER,
         UNSUPPORTED_REVIEW,
-        REVISED_DRAFT,
+        REVISED_ANSWER,
         SUPPORTED_REVIEW,
         NO_PROFILE_FACTS,
     ]
@@ -90,6 +105,7 @@ def test_unsupported_draft_is_revised_once_then_accepted(
     visited, answer = run_graph(build_scripted_graph, toolbox, replies)
 
     assert visited == [
+        "guard_input",
         "planner",
         "retriever",
         "executor",
@@ -106,9 +122,10 @@ def test_draft_still_unsupported_after_revision_ends_with_fallback_answer(
 ) -> None:
     replies = [
         PLAN_WITH_SEARCH,
-        GROUNDED_DRAFT,
+        NO_POISONED_CHUNKS,
+        GROUNDED_ANSWER,
         UNSUPPORTED_REVIEW,
-        REVISED_DRAFT,
+        REVISED_ANSWER,
         UNSUPPORTED_REVIEW,
         NO_PROFILE_FACTS,
     ]
@@ -116,6 +133,7 @@ def test_draft_still_unsupported_after_revision_ends_with_fallback_answer(
     visited, answer = run_graph(build_scripted_graph, toolbox, replies)
 
     assert visited == [
+        "guard_input",
         "planner",
         "retriever",
         "executor",
@@ -135,18 +153,17 @@ def test_executor_history_is_only_appended_to_across_tool_calls_and_revisions(
     list_tickets_call = AIMessage(
         "", tool_calls=[{"name": "list_tickets", "args": {}, "id": "call-list"}]
     )
-    scripted_model = ScriptedChatModel(
-        messages=iter(
-            [
-                PLAN_WITH_SEARCH,
-                list_tickets_call,
-                GROUNDED_DRAFT,
-                UNSUPPORTED_REVIEW,
-                REVISED_DRAFT,
-                SUPPORTED_REVIEW,
-                NO_PROFILE_FACTS,
-            ]
-        )
+    scripted_model = scripted_model_after_safe_input(
+        [
+            PLAN_WITH_SEARCH,
+            NO_POISONED_CHUNKS,
+            list_tickets_call,
+            GROUNDED_ANSWER,
+            UNSUPPORTED_REVIEW,
+            REVISED_ANSWER,
+            SUPPORTED_REVIEW,
+            NO_PROFILE_FACTS,
+        ]
     )
     graph = build_graph(chat_model_factory=lambda role: scripted_model)
 

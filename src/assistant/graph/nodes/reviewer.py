@@ -6,14 +6,14 @@ from assistant.graph.state import (
     REVIEWER_FEEDBACK_NAME,
     AgentState,
     AssistantContext,
-    ContextNode,
+    Node,
     StateUpdate,
     completed_write_actions,
     format_retrieved_context,
     format_tool_results,
     latest_question,
 )
-from assistant.guardrails.schema import Draft, Review, ask_for_json
+from assistant.guardrails.schema import Answer, Review, ask_for_json
 
 REVIEWER_INSTRUCTIONS = """\
 You check whether a draft answer is grounded in the document excerpts and tool results it was \
@@ -30,13 +30,13 @@ UNSUPPORTED_ANSWER_FALLBACK = (
 )
 
 
-def build_reviewer_prompt(state: AgentState, draft: Draft, available_tools: list[str]) -> str:
+def build_reviewer_prompt(state: AgentState, answer: Answer, available_tools: list[str]) -> str:
     return (
         f"Question: {latest_question(state)}\n\n"
         f"Tools available to this user: {', '.join(available_tools)}\n\n"
         f"Document excerpts:\n{format_retrieved_context(state['retrieved'])}\n\n"
         f"Tool results:\n{format_tool_results(state)}\n\n"
-        f"Draft answer:\n{draft.text}"
+        f"Draft answer:\n{answer.text}"
     )
 
 
@@ -50,20 +50,23 @@ def fallback_answer(state: AgentState) -> str:
     return f"{UNSUPPORTED_ANSWER_FALLBACK} These approved actions did run: {actions}."
 
 
-def make_reviewer_node(llm: BaseChatModel, max_revisions: int) -> ContextNode:
-    async def review_draft(state: AgentState, runtime: Runtime[AssistantContext]) -> StateUpdate:
-        draft = state["draft"]
-        if draft is None:
-            raise ValueError("Reviewer ran before the executor produced a draft")
+def make_reviewer_node(llm: BaseChatModel, max_revisions: int) -> Node:
+    async def review_answer(state: AgentState, runtime: Runtime[AssistantContext]) -> StateUpdate:
+        answer = state["answer"]
+        if answer is None:
+            raise ValueError("Reviewer ran before the executor produced an answer")
         available_tools = sorted(runtime.context.tools_by_name)
         review = await ask_for_json(
-            llm, REVIEWER_INSTRUCTIONS, build_reviewer_prompt(state, draft, available_tools), Review
+            llm,
+            REVIEWER_INSTRUCTIONS,
+            build_reviewer_prompt(state, answer, available_tools),
+            Review,
         )
         if review.supported:
-            return {"review": review, "verdict": "accepted", "messages": [AIMessage(draft.text)]}
+            return {"review": review, "verdict": "accepted", "messages": [AIMessage(answer.text)]}
         if state["revision_count"] < max_revisions:
             feedback = HumanMessage(
-                f"A reviewer rejected your draft.\nDraft: {draft.text}\n"
+                f"A reviewer rejected your draft.\nDraft: {answer.text}\n"
                 f"Reason: {review.reason}\nWrite a corrected answer.",
                 name=REVIEWER_FEEDBACK_NAME,
             )
@@ -79,4 +82,4 @@ def make_reviewer_node(llm: BaseChatModel, max_revisions: int) -> ContextNode:
             "messages": [AIMessage(fallback_answer(state))],
         }
 
-    return review_draft
+    return review_answer

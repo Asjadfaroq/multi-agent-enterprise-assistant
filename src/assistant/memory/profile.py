@@ -6,7 +6,7 @@ from psycopg.rows import class_row
 from assistant.graph.state import (
     AgentState,
     AssistantContext,
-    ContextNode,
+    Node,
     StateUpdate,
     latest_question,
 )
@@ -60,7 +60,7 @@ class PostgresProfileStore:
             )
 
 
-def make_memory_node(llm: BaseChatModel, max_facts_per_turn: int) -> ContextNode:
+def make_memory_node(llm: BaseChatModel, max_facts_per_turn: int) -> Node:
     async def remember_user_facts(
         state: AgentState, runtime: Runtime[AssistantContext]
     ) -> StateUpdate:

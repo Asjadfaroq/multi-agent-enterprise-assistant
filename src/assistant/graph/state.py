@@ -5,9 +5,9 @@ from typing import Annotated, Any, Literal, Protocol, TypedDict
 from langchain_core.messages import AIMessage, AnyMessage, HumanMessage, ToolCall, ToolMessage
 from langchain_core.tools import BaseTool
 from langgraph.graph.message import add_messages
-from langgraph.runtime import Runtime
 
-from assistant.guardrails.schema import Draft, Plan, ProfileFact, Review
+from assistant.guardrails.pii import mask_pii
+from assistant.guardrails.schema import Answer, Plan, ProfileFact, Review
 from assistant.mcp_server.auth import WRITE_TOOL_NAMES
 from assistant.mcp_server.tools_kb import SearchHit
 
@@ -22,9 +22,10 @@ class AgentState(TypedDict):
     messages: Annotated[list[AnyMessage], add_messages]
     user_id: str
     user_profile: list[ProfileFact]
+    input_blocked: bool
     plan: Plan | None
     retrieved: list[SearchHit]
-    draft: Draft | None
+    answer: Answer | None
     review: Review | None
     verdict: ReviewVerdict | None
     revision_count: int
@@ -45,20 +46,21 @@ class AssistantContext:
 
 
 StateUpdate = dict[str, Any]
-Node = Callable[[AgentState], Awaitable[StateUpdate]]
-ContextNode = Callable[[AgentState, Runtime[AssistantContext]], Awaitable[StateUpdate]]
+# Nodes take the state plus whichever of `runtime` and `config` they need; LangGraph injects both.
+Node = Callable[..., Awaitable[StateUpdate]]
 
 
 def new_turn_state(user_id: str, question: str) -> AgentState:
     # Every per-turn field is reset so a checkpointed thread never reuses the previous turn's
-    # chunks or review.
+    # chunks or review. PII is masked here, before the model, the checkpoint or a trace sees it.
     return AgentState(
-        messages=[HumanMessage(question)],
+        messages=[HumanMessage(mask_pii(question))],
         user_id=user_id,
         user_profile=[],
+        input_blocked=False,
         plan=None,
         retrieved=[],
-        draft=None,
+        answer=None,
         review=None,
         verdict=None,
         revision_count=0,

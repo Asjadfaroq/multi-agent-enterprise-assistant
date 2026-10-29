@@ -15,6 +15,8 @@ class Settings(BaseSettings):
 
     mcp_server_host: str = "127.0.0.1"
     mcp_server_port: int = 8001
+    # Shared secret the API presents to the MCP server, so X-User is only trusted from the API.
+    mcp_service_token: SecretStr = SecretStr("")
     api_url: str = "http://127.0.0.1:8000"
 
     agent_model: str = "claude-haiku-5-5"
@@ -28,6 +30,10 @@ class Settings(BaseSettings):
     embedding_query_prefix: str = "Represent this sentence for searching relevant passages: "
     search_result_count: int = Field(default=5, gt=0)
     ticket_list_limit: int = Field(default=20, gt=0)
+
+    # Base64-looking runs at least this long are decoded and checked for hidden instructions.
+    injection_encoded_payload_min_length: int = Field(default=40, gt=0)
+    pii_phone_regions: tuple[str, ...] = ("SA", "PT", "US", "GB")
 
     # bge-small truncates input at 512 tokens, so chunks must stay below that.
     chunk_size_tokens: int = Field(default=500, gt=0, le=510)

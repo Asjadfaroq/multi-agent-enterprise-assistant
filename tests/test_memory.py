@@ -1,7 +1,12 @@
 import asyncio
 import json
 
-from conftest import FakeToolbox, ScriptedChatModel, connect_or_skip
+from conftest import (
+    FakeToolbox,
+    ScriptedChatModel,
+    connect_or_skip,
+    scripted_model_after_safe_input,
+)
 
 from assistant.config import get_settings
 from assistant.graph.build import build_graph
@@ -11,13 +16,13 @@ from assistant.guardrails.schema import ProfileFact
 from assistant.memory.profile import PostgresProfileStore, create_user_memory_table
 
 PLAN_WITHOUT_TOOLS = json.dumps({"steps": ["reply"], "needs_tools": []})
-DRAFT = json.dumps({"text": "Noted.", "citations": []})
+ANSWER = json.dumps({"text": "Noted.", "citations": [], "confidence": 0.9})
 SUPPORTED_REVIEW = json.dumps({"supported": True, "reason": "No factual claims."})
 
 
 def run_turn(toolbox: FakeToolbox, question: str, memory_reply: str) -> ScriptedChatModel:
-    scripted_model = ScriptedChatModel(
-        messages=iter([PLAN_WITHOUT_TOOLS, DRAFT, SUPPORTED_REVIEW, memory_reply])
+    scripted_model = scripted_model_after_safe_input(
+        [PLAN_WITHOUT_TOOLS, ANSWER, SUPPORTED_REVIEW, memory_reply]
     )
     graph = build_graph(chat_model_factory=lambda role: scripted_model)
     asyncio.run(graph.ainvoke(new_turn_state("lina", question), context=toolbox.context(False)))

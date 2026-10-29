@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 
 import httpx
 import pytest
-from conftest import NO_PROFILE_FACTS, FakeToolbox, ScriptedChatModel
+from conftest import NO_PROFILE_FACTS, FakeToolbox, scripted_model_after_safe_input
 from langchain_core.messages import AIMessage
 from langgraph.checkpoint.memory import InMemorySaver
 
@@ -31,7 +31,9 @@ SCRIPTED_REPLIES = [
             }
         ],
     ),
-    json.dumps({"text": "Created ticket 1 [ticket-1].", "citations": ["ticket-1"]}),
+    json.dumps(
+        {"text": "Created ticket 1 [ticket-1].", "citations": ["ticket-1"], "confidence": 0.9}
+    ),
     json.dumps({"supported": True, "reason": "Matches the tool result."}),
     NO_PROFILE_FACTS,
 ]
@@ -48,7 +50,7 @@ def api_users(committed_users: Callable[[str, str], None]) -> None:
 def paused_thread_toolbox(api_users: None) -> FakeToolbox:
     """Serves a graph whose thread is paused on a create_ticket call waiting for approval."""
     toolbox = FakeToolbox()
-    scripted_model = ScriptedChatModel(messages=iter(SCRIPTED_REPLIES))
+    scripted_model = scripted_model_after_safe_input(SCRIPTED_REPLIES)
     graph = build_graph(
         chat_model_factory=lambda role: scripted_model,
         checkpointer=InMemorySaver(serde=checkpoint_serializer()),

@@ -17,7 +17,7 @@ from assistant.graph.nodes.retriever import SEARCH_TOOL_NAME
 from assistant.graph.state import (
     AgentState,
     AssistantContext,
-    ContextNode,
+    Node,
     StateUpdate,
     completed_write_actions,
     format_retrieved_context,
@@ -26,14 +26,20 @@ from assistant.graph.state import (
     messages_since_latest_question,
     pending_tool_calls,
 )
-from assistant.guardrails.schema import Draft, json_reply_instructions, parse_model_output
+from assistant.guardrails.schema import (
+    Answer,
+    InvalidModelOutputError,
+    json_reply_instructions,
+    parse_with_one_retry,
+)
 from assistant.mcp_server.auth import WRITE_TOOL_NAMES
 
 EXECUTOR_INSTRUCTIONS = """\
 You answer an employee's question and can act on the internal tickets system with the tools \
 provided. Use only the document excerpts for facts about the company and the ticket tools for \
 anything about tickets. Cite document facts as [doc_id] and ticket facts as [ticket-<id>], and \
-list every cited id in "citations".
+list every cited id in "citations". Set "confidence" between 0 and 1 to how completely the \
+excerpts and tool results support the answer.
 If the excerpts and tools do not contain the answer, say you could not find it in what the user \
 can access. Never use outside knowledge about the company. Write the answer in the user's \
 preferred language when it is known.
@@ -45,6 +51,9 @@ WRITE_ALREADY_DONE_MESSAGE = (
     "Not run: an approved change already ran in this turn. Report its result to the user."
 )
 CANCELLED_ANSWER = "The approver rejected {tools}, so nothing was changed."
+INVALID_ANSWER_FALLBACK = (
+    "Sorry, I could not produce a reliable answer this time. Please try asking again."
+)
 
 
 class ProposedToolCall(BaseModel):
@@ -60,29 +69,33 @@ def build_executor_prompt(state: AgentState) -> str:
     )
 
 
-def make_executor_node(llm: BaseChatModel) -> ContextNode:
-    async def draft_or_call_tools(
+def make_executor_node(llm: BaseChatModel) -> Node:
+    async def answer_or_call_tools(
         state: AgentState, runtime: Runtime[AssistantContext]
     ) -> StateUpdate:
         # Search is the retriever's job; the executor only gets the ticket tools.
         ticket_tools = [
             tool for name, tool in runtime.context.tools_by_name.items() if name != SEARCH_TOOL_NAME
         ]
-        system_prompt = f"{EXECUTOR_INSTRUCTIONS}\n\n{json_reply_instructions(Draft)}"
+        tool_calling_llm = llm.bind_tools(ticket_tools)
         # The turn's history is only ever appended to: Claude signs its thinking blocks against
         # everything before them, and the API rejects a history whose earlier messages changed.
-        reply = await llm.bind_tools(ticket_tools).ainvoke(
-            [
-                SystemMessage(system_prompt),
-                HumanMessage(build_executor_prompt(state)),
-                *messages_since_latest_question(state),
-            ]
-        )
+        messages = [
+            SystemMessage(f"{EXECUTOR_INSTRUCTIONS}\n\n{json_reply_instructions(Answer)}"),
+            HumanMessage(build_executor_prompt(state)),
+            *messages_since_latest_question(state),
+        ]
+        reply = await tool_calling_llm.ainvoke(messages)
         if isinstance(reply, AIMessage) and reply.tool_calls:
             return {"messages": [reply]}
-        return {"draft": parse_model_output(reply.text, Draft)}
+        try:
+            answer = await parse_with_one_retry(tool_calling_llm, messages, reply, Answer)
+        except InvalidModelOutputError:
+            # Fail closed: an answer that is still malformed after one retry is never shown.
+            return {"answer": None, "messages": [AIMessage(INVALID_ANSWER_FALLBACK)]}
+        return {"answer": answer}
 
-    return draft_or_call_tools
+    return answer_or_call_tools
 
 
 def refuse_tool_calls(calls: list[ToolCall], reason: str) -> list[ToolMessage]:

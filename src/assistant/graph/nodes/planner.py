@@ -4,7 +4,7 @@ from langgraph.runtime import Runtime
 from assistant.graph.state import (
     AgentState,
     AssistantContext,
-    ContextNode,
+    Node,
     StateUpdate,
     format_user_profile,
     latest_question,
@@ -25,7 +25,7 @@ anything about tickets. Use no tools for greetings or small talk. Take what is k
 user into account, for example by planning to answer in their preferred language."""
 
 
-def make_planner_node(llm: BaseChatModel) -> ContextNode:
+def make_planner_node(llm: BaseChatModel) -> Node:
     async def plan_answer(state: AgentState, runtime: Runtime[AssistantContext]) -> StateUpdate:
         user_profile = await runtime.context.profile_store.load_facts(state["user_id"])
         prompt = (

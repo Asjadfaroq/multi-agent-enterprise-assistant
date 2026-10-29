@@ -1,4 +1,6 @@
 import httpx
+import psycopg
+from seed import reset_sample_tickets
 
 from assistant.config import get_settings
 
@@ -44,6 +46,10 @@ def run_turn(client: httpx.Client, user_id: str, question: str) -> None:
 
 
 def main() -> None:
+    # Start every run from the sample tickets, so repeated runs neither pile up duplicate tickets
+    # nor show different ticket numbers.
+    with psycopg.connect(get_settings().database_url) as connection:
+        reset_sample_tickets(connection)
     with httpx.Client(base_url=get_settings().api_url, timeout=REQUEST_TIMEOUT_SECONDS) as client:
         for user_id, question in DEMO_TURNS:
             run_turn(client, user_id, question)

@@ -61,17 +61,27 @@ def seed_users(connection: psycopg.Connection) -> None:
         )
 
 
-def seed_tickets(connection: psycopg.Connection) -> None:
-    create_tickets_table(connection)
-    # Only seed an empty table so re-running the seed never duplicates or overwrites tickets.
-    if connection.execute("SELECT EXISTS (SELECT 1 FROM tickets)").fetchone()[0]:
-        return
+def insert_sample_tickets(connection: psycopg.Connection) -> None:
     with connection.cursor() as cursor:
         cursor.executemany(
             "INSERT INTO tickets (title, description, category, priority, status, created_by) "
             "VALUES (%s, %s, %s, %s, %s, %s)",
             SAMPLE_TICKETS,
         )
+
+
+def seed_tickets(connection: psycopg.Connection) -> None:
+    create_tickets_table(connection)
+    # Only seed an empty table so re-running the seed never duplicates or overwrites tickets.
+    if connection.execute("SELECT EXISTS (SELECT 1 FROM tickets)").fetchone()[0]:
+        return
+    insert_sample_tickets(connection)
+
+
+def reset_sample_tickets(connection: psycopg.Connection) -> None:
+    """Replaces every ticket with the sample set, numbered from 1 again."""
+    connection.execute("TRUNCATE tickets RESTART IDENTITY")
+    insert_sample_tickets(connection)
 
 
 def main() -> None:

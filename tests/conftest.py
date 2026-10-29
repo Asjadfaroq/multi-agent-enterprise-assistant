@@ -22,6 +22,8 @@ from assistant.mcp_server.tools_kb import SearchHit
 
 DB_CONNECT_TIMEOUT_SECONDS = 2
 NO_PROFILE_FACTS = json.dumps({"facts": []})
+SAFE_INPUT_VERDICT = json.dumps({"is_injection": False, "reason": "Ordinary request."})
+NO_POISONED_CHUNKS = json.dumps({"flagged": []})
 LEAVE_POLICY_HIT = SearchHit(
     doc_id="parental-leave-policy",
     acl="hr",
@@ -69,12 +71,13 @@ class FakeToolbox:
 
     def __init__(self) -> None:
         self.search_queries: list[str] = []
+        self.search_hits = [LEAVE_POLICY_HIT]
         self.created_tickets: list[dict[str, Any]] = []
         self.profile_store = InMemoryProfileStore()
 
     async def search_documents(self, query: str) -> tuple[str, dict[str, Any]]:
         self.search_queries.append(query)
-        hits = [LEAVE_POLICY_HIT.model_dump()]
+        hits = [hit.model_dump() for hit in self.search_hits]
         return str(hits), {"structured_content": {"result": hits}}
 
     async def list_tickets(self) -> str:
@@ -116,12 +119,17 @@ def toolbox() -> FakeToolbox:
     return FakeToolbox()
 
 
+def scripted_model_after_safe_input(replies: list[str | AIMessage]) -> ScriptedChatModel:
+    """A scripted model whose first reply clears the input guard, followed by `replies`."""
+    return ScriptedChatModel(messages=iter([SAFE_INPUT_VERDICT, *replies]))
+
+
 @pytest.fixture
 def build_scripted_graph() -> GraphBuilder:
     def build(
         replies: list[str | AIMessage], checkpointer: BaseCheckpointSaver | None = None
     ) -> CompiledStateGraph:
-        scripted_model = ScriptedChatModel(messages=iter(replies))
+        scripted_model = scripted_model_after_safe_input(replies)
         return build_graph(
             chat_model_factory=lambda role: scripted_model, checkpointer=checkpointer
         )

@@ -27,10 +27,10 @@ CREATE_TICKET_CALL = AIMessage(
 LIST_TICKETS_CALL = AIMessage(
     "", tool_calls=[{"name": "list_tickets", "args": {}, "id": "call-list"}]
 )
-FINAL_DRAFT = json.dumps({"text": "Done.", "citations": []})
+FINAL_ANSWER = json.dumps({"text": "Done.", "citations": [], "confidence": 0.9})
 SUPPORTED_REVIEW = json.dumps({"supported": True, "reason": "Matches the tool result."})
 UNSUPPORTED_REVIEW = json.dumps({"supported": False, "reason": "Claim not in tool results."})
-ACCEPTED_ANSWER_REPLIES = [FINAL_DRAFT, SUPPORTED_REVIEW, NO_PROFILE_FACTS]
+ACCEPTED_ANSWER_REPLIES = [FINAL_ANSWER, SUPPORTED_REVIEW, NO_PROFILE_FACTS]
 
 
 def checkpointed_graph(build: GraphBuilder, replies: list[str | AIMessage]) -> CompiledStateGraph:
@@ -88,7 +88,7 @@ def test_approved_write_resumes_and_creates_the_ticket(
 def test_unverified_answer_still_reports_the_approved_write_that_ran(
     build_scripted_graph: GraphBuilder, toolbox: FakeToolbox
 ) -> None:
-    unverified_twice = [FINAL_DRAFT, UNSUPPORTED_REVIEW, FINAL_DRAFT, UNSUPPORTED_REVIEW]
+    unverified_twice = [FINAL_ANSWER, UNSUPPORTED_REVIEW, FINAL_ANSWER, UNSUPPORTED_REVIEW]
     replies = [PLAN_TICKET_WRITE, CREATE_TICKET_CALL, *unverified_twice, NO_PROFILE_FACTS]
     graph = checkpointed_graph(build_scripted_graph, replies)
     context = toolbox.context(can_write_tickets=True)
