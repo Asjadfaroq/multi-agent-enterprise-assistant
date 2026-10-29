@@ -57,7 +57,8 @@ def run_graph(
                 visited_nodes.append(node_name)
                 if node_update and "messages" in node_update:
                     final_answer = node_update["messages"][-1].text
-        return visited_nodes, final_answer
+        # The input guard and the planner run in the same step, so either may report first.
+        return sorted(visited_nodes[:2]) + visited_nodes[2:], final_answer
 
     return asyncio.run(collect_visited_nodes_and_answer())
 
@@ -75,7 +76,15 @@ def test_company_question_is_planned_retrieved_drafted_and_reviewed(
 
     visited, answer = run_graph(build_scripted_graph, toolbox, replies)
 
-    assert visited == ["guard_input", "planner", "retriever", "executor", "reviewer", "remember"]
+    assert visited == [
+        "guard_input",
+        "planner",
+        "apply_input_guard",
+        "retriever",
+        "executor",
+        "reviewer",
+        "remember",
+    ]
     assert answer == "Maternity leave is 14 weeks [parental-leave-policy]."
     assert toolbox.search_queries == [QUESTION]
 
@@ -87,7 +96,14 @@ def test_small_talk_skips_document_search(
 
     visited, _ = run_graph(build_scripted_graph, toolbox, replies)
 
-    assert visited == ["guard_input", "planner", "executor", "reviewer", "remember"]
+    assert visited == [
+        "guard_input",
+        "planner",
+        "apply_input_guard",
+        "executor",
+        "reviewer",
+        "remember",
+    ]
     assert toolbox.search_queries == []
 
 
@@ -109,6 +125,7 @@ def test_unsupported_draft_is_revised_once_then_accepted(
     assert visited == [
         "guard_input",
         "planner",
+        "apply_input_guard",
         "retriever",
         "executor",
         "reviewer",
@@ -137,6 +154,7 @@ def test_draft_still_unsupported_after_revision_ends_with_fallback_answer(
     assert visited == [
         "guard_input",
         "planner",
+        "apply_input_guard",
         "retriever",
         "executor",
         "reviewer",

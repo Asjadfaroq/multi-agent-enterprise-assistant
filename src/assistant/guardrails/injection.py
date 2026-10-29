@@ -125,3 +125,9 @@ def make_input_guard_node(llm: BaseChatModel, encoded_payload_min_length: int) -
         return {"input_blocked": True, "messages": [AIMessage(BLOCKED_INPUT_REFUSAL)]}
 
     return guard_input
+
+
+async def apply_input_guard(state: AgentState) -> StateUpdate:
+    # The planner runs alongside the guard to save a model round trip; a plan made for input the
+    # guard blocked must never be used.
+    return {"plan": None} if state["input_blocked"] else {}

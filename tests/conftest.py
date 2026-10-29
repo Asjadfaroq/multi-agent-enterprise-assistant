@@ -7,7 +7,7 @@ import pytest
 from langchain_core.callbacks import CallbackManagerForLLMRun
 from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 from langchain_core.messages import AIMessage, BaseMessage
-from langchain_core.outputs import ChatResult
+from langchain_core.outputs import ChatGeneration, ChatResult
 from langchain_core.runnables import Runnable
 from langchain_core.tools import BaseTool, StructuredTool
 from langgraph.checkpoint.base import BaseCheckpointSaver
@@ -17,6 +17,7 @@ from pydantic import Field
 from assistant.config import get_settings
 from assistant.graph.build import build_graph
 from assistant.graph.state import AssistantContext
+from assistant.guardrails.injection import INPUT_SCREEN_INSTRUCTIONS
 from assistant.guardrails.schema import ProfileFact
 from assistant.mcp_server.auth import create_users_table
 from assistant.mcp_server.tools_kb import SearchHit
@@ -36,10 +37,15 @@ LEAVE_POLICY_HIT = SearchHit(
 
 
 class ScriptedChatModel(GenericFakeChatModel):
-    """Replays fixed replies in order and records every prompt; bound tools are ignored."""
+    """Replays fixed replies in order and records every prompt; bound tools are ignored.
+
+    The input guard runs at the same time as the planner, so when `input_verdict` is set the
+    guard's prompt is answered with it instead of taking the next reply from the queue.
+    """
 
     received_prompts: list[list[BaseMessage]] = Field(default_factory=list)
     bound_tool_names: list[list[str]] = Field(default_factory=list)
+    input_verdict: str | None = None
 
     def _generate(
         self,
@@ -49,6 +55,10 @@ class ScriptedChatModel(GenericFakeChatModel):
         **kwargs: Any,
     ) -> ChatResult:
         self.received_prompts.append(list(messages))
+        if self.input_verdict is not None and messages[0].text.startswith(
+            INPUT_SCREEN_INSTRUCTIONS
+        ):
+            return ChatResult(generations=[ChatGeneration(message=AIMessage(self.input_verdict))])
         return super()._generate(messages, stop, run_manager, **kwargs)
 
     def bind_tools(
@@ -134,8 +144,8 @@ def toolbox() -> FakeToolbox:
 
 
 def scripted_model_after_safe_input(replies: list[str | AIMessage]) -> ScriptedChatModel:
-    """A scripted model whose first reply clears the input guard, followed by `replies`."""
-    return ScriptedChatModel(messages=iter([SAFE_INPUT_VERDICT, *replies]))
+    """A scripted model whose input guard clears every message and that replays `replies`."""
+    return ScriptedChatModel(messages=iter(replies), input_verdict=SAFE_INPUT_VERDICT)
 
 
 @pytest.fixture

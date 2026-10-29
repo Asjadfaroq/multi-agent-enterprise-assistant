@@ -6,11 +6,11 @@ from assistant.graph.state import AgentState, pending_tool_calls
 from assistant.mcp_server.auth import WRITE_TOOL_NAMES
 
 
-def route_after_input_guard(state: AgentState) -> Literal["planner", "__end__"]:
-    return END if state["input_blocked"] else "planner"
+def route_after_input_guard(state: AgentState) -> Literal["retriever", "executor", "__end__"]:
+    return END if state["input_blocked"] else route_by_plan(state)
 
 
-def route_after_planner(state: AgentState) -> Literal["retriever", "executor"]:
+def route_by_plan(state: AgentState) -> Literal["retriever", "executor"]:
     plan = state["plan"]
     if plan is not None and "search_documents" in plan.needs_tools:
         return "retriever"

@@ -14,7 +14,6 @@ from assistant.config import get_settings
 from assistant.graph.edges import (
     route_after_executor,
     route_after_input_guard,
-    route_after_planner,
     route_after_review,
 )
 from assistant.graph.nodes.approval import request_approval
@@ -23,7 +22,7 @@ from assistant.graph.nodes.planner import make_planner_node
 from assistant.graph.nodes.retriever import make_retriever_node
 from assistant.graph.nodes.reviewer import make_reviewer_node
 from assistant.graph.state import AgentState, AssistantContext
-from assistant.guardrails.injection import make_input_guard_node
+from assistant.guardrails.injection import apply_input_guard, make_input_guard_node
 from assistant.guardrails.schema import Answer, Plan, ProfileFact, Review
 from assistant.llm import ModelRole, get_chat_model
 from assistant.mcp_server.auth import (
@@ -69,9 +68,12 @@ def build_graph(
     graph.add_node("run_tools", run_tool_calls)
     graph.add_node("reviewer", make_reviewer_node(agent_llm, settings.max_review_revisions))
     graph.add_node("remember", make_memory_node(agent_llm, settings.max_profile_facts_per_turn))
+    graph.add_node("apply_input_guard", apply_input_guard)
+    # The input guard and the planner run in parallel; the join waits for both.
     graph.add_edge(START, "guard_input")
-    graph.add_conditional_edges("guard_input", route_after_input_guard)
-    graph.add_conditional_edges("planner", route_after_planner)
+    graph.add_edge(START, "planner")
+    graph.add_edge(["guard_input", "planner"], "apply_input_guard")
+    graph.add_conditional_edges("apply_input_guard", route_after_input_guard)
     graph.add_edge("retriever", "executor")
     graph.add_conditional_edges("executor", route_after_executor)
     graph.add_edge("run_tools", "executor")

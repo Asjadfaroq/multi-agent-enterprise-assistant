@@ -1,3 +1,4 @@
+import asyncio
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from typing import Annotated
@@ -13,10 +14,9 @@ from pydantic import BaseModel
 
 from assistant.api.threads import (
     ChatResponse,
+    answer_turn,
     exclusive_approval,
-    response_for_thread,
     thread_config,
-    traced_thread_config,
 )
 from assistant.config import get_settings
 from assistant.graph.build import build_graph, checkpoint_serializer, open_assistant_context
@@ -29,7 +29,7 @@ from assistant.mcp_server.auth import (
     require_ticket_write_permission,
     role_for_user,
 )
-from assistant.observability.tracing import flush_traces, trace_attributes
+from assistant.observability.tracing import flush_traces
 
 UserIdHeader = Annotated[str, Header(alias=CALLER_HEADER)]
 
@@ -56,10 +56,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.graph = build_graph(checkpointer=checkpointer)
         app.state.open_assistant_context = open_assistant_context
         yield
+        # Turns still writing memory after their reply must finish before the checkpointer closes.
+        await asyncio.gather(*app.state.finishing_turns.values(), return_exceptions=True)
     flush_traces()
 
 
 app = FastAPI(title="Enterprise Assistant", lifespan=lifespan)
+app.state.finishing_turns = {}
 
 
 @app.exception_handler(PermissionError)
@@ -86,15 +89,18 @@ async def chat(request: ChatRequest, user_id: UserIdHeader) -> ChatResponse:
         raise PermissionError(f"Thread {thread_id} belongs to another user")
     if snapshot.interrupts:
         raise HTTPException(409, f"Thread {thread_id} is waiting for approval; call /approve")
+    if thread_id in app.state.finishing_turns:
+        raise HTTPException(409, f"Thread {thread_id} is still finishing its previous turn")
     role = role_in_database(user_id)
-    async with app.state.open_assistant_context(user_id) as context:
-        with trace_attributes(user_id, role, thread_id):
-            await graph.ainvoke(
-                new_turn_state(user_id, request.message),
-                traced_thread_config(thread_id, user_id, role),
-                context=context,
-            )
-    return response_for_thread(thread_id, await graph.aget_state(thread_config(thread_id)))
+    return await answer_turn(
+        graph,
+        new_turn_state(user_id, request.message),
+        thread_id,
+        user_id,
+        role,
+        app.state.open_assistant_context,
+        app.state.finishing_turns,
+    )
 
 
 @app.post("/approve/{thread_id}")
@@ -110,13 +116,15 @@ async def approve(
             raise HTTPException(409, f"Thread {thread_id} has no action waiting for approval")
         # The approved tools run as the user who asked for them, not as the approver.
         owner_id = snapshot.values["user_id"]
-        owner_role = role_in_database(owner_id)
-        config = traced_thread_config(thread_id, owner_id, owner_role)
-        async with app.state.open_assistant_context(owner_id) as context:
-            with trace_attributes(owner_id, owner_role, thread_id):
-                await graph.ainvoke(Command(resume=request.approved), config, context=context)
-        snapshot = await graph.aget_state(thread_config(thread_id))
-    return response_for_thread(thread_id, snapshot)
+        return await answer_turn(
+            graph,
+            Command(resume=request.approved),
+            thread_id,
+            owner_id,
+            role_in_database(owner_id),
+            app.state.open_assistant_context,
+            app.state.finishing_turns,
+        )
 
 
 @app.post("/ingest")
