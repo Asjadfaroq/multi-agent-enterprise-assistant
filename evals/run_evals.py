@@ -40,12 +40,13 @@ async def run_golden_cases() -> list[CaseRun]:
         graph = build_graph(checkpointer=checkpointer)
         reset_tickets()
         cleared = await clear_pending_approval_threads(graph, checkpointer)
-        print(f"Reset sample tickets and cleared {cleared} pending approval threads")
+        # Flushed so progress shows even when output is redirected to a file.
+        print(f"Reset sample tickets and cleared {cleared} pending approval threads", flush=True)
         runs = []
         # Cases run one at a time: they share the tickets table and per-user memory.
         for number, case in enumerate(cases, start=1):
             run = await run_case(graph, case)
-            print(f"[{number}/{len(cases)}] {case.id} {run.latency_seconds:.1f}s")
+            print(f"[{number}/{len(cases)}] {case.id} {run.latency_seconds:.1f}s", flush=True)
             runs.append(run)
     return runs
 

@@ -19,10 +19,16 @@ from assistant.mcp_server.auth import (
     require_ingest_permission,
     require_ticket_write_permission,
     user_id_from_headers,
+    visible_ticket_creator_for_user,
 )
 from assistant.mcp_server.server import build_server, tools_visible_to_role
 from assistant.mcp_server.tools_kb import search_chunks
-from assistant.mcp_server.tools_tickets import create_tickets_table, insert_ticket
+from assistant.mcp_server.tools_tickets import (
+    create_tickets_table,
+    fetch_ticket,
+    fetch_tickets,
+    insert_ticket,
+)
 
 SEARCH_EVERYTHING_K = 1000
 
@@ -137,3 +143,42 @@ def test_mcp_server_lists_write_tools_only_for_ticket_writers() -> None:
 
     assert {"create_ticket", "update_ticket"}.isdisjoint(visible_tool_names("viewer"))
     assert {"create_ticket", "update_ticket"} <= visible_tool_names("agent")
+
+
+def insert_tickets_for_read_policy(connection: psycopg.Connection) -> tuple[int, int]:
+    insert_test_user(connection, "test-viewer", "viewer")
+    insert_test_user(connection, "test-agent", "agent")
+    own = insert_ticket(connection, "Viewer's laptop", "Broken", "it", "P3", "test-viewer")
+    other = insert_ticket(
+        connection, "Refund for a customer", "Billing", "billing", "P3", "test-agent"
+    )
+    return own.id, other.id
+
+
+def test_viewer_lists_only_the_tickets_they_created(connection: psycopg.Connection) -> None:
+    own_id, other_id = insert_tickets_for_read_policy(connection)
+
+    created_by = visible_ticket_creator_for_user(connection, "test-viewer")
+    visible_ids = {ticket.id for ticket in fetch_tickets(connection, None, 1000, created_by)}
+
+    assert own_id in visible_ids and other_id not in visible_ids
+
+
+def test_viewer_cannot_get_someone_elses_ticket_and_learns_nothing_about_it(
+    connection: psycopg.Connection,
+) -> None:
+    own_id, other_id = insert_tickets_for_read_policy(connection)
+    created_by = visible_ticket_creator_for_user(connection, "test-viewer")
+
+    assert fetch_ticket(connection, own_id, created_by).created_by == "test-viewer"
+    with pytest.raises(LookupError, match=f"Ticket {other_id} does not exist"):
+        fetch_ticket(connection, other_id, created_by)
+
+
+def test_agent_reads_every_ticket(connection: psycopg.Connection) -> None:
+    own_id, other_id = insert_tickets_for_read_policy(connection)
+
+    created_by = visible_ticket_creator_for_user(connection, "test-agent")
+    visible_ids = {ticket.id for ticket in fetch_tickets(connection, None, 1000, created_by)}
+
+    assert created_by is None and {own_id, other_id} <= visible_ids

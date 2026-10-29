@@ -9,7 +9,7 @@ from pydantic import ValidationError
 
 from assistant.config import get_settings
 from assistant.knowledge.chunking import Chunk, Document, chunk_document
-from assistant.llm import FloatArray, count_tokens, embed_texts
+from assistant.llm import FloatArray, count_tokens, embed_passages
 
 
 def load_documents(docs_dir: Path) -> list[Document]:
@@ -80,7 +80,7 @@ def ingest_documents(docs_dir: Path, database_url: str) -> int:
         register_vector(connection)
         for document in documents:
             chunks = chunk_document(document, settings.chunk_size_tokens, count_tokens)
-            embeddings = embed_texts([chunk.content for chunk in chunks])
+            embeddings = embed_passages([chunk.content for chunk in chunks])
             replace_document_chunks(connection, document.doc_id, chunks, embeddings)
             chunk_count += len(chunks)
     return chunk_count

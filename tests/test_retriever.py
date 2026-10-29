@@ -11,7 +11,7 @@ from conftest import (
 from assistant.config import get_settings
 from assistant.graph.build import build_graph
 from assistant.graph.state import AgentState, new_turn_state
-from assistant.mcp_server.tools_kb import SearchHit
+from assistant.mcp_server.tools_kb import SearchHit, keep_best_ranked
 
 RESULT_COUNT = get_settings().search_result_count
 PLAN_WITH_SEARCH = json.dumps({"steps": ["search"], "needs_tools": ["search_documents"]})
@@ -79,3 +79,11 @@ def test_no_extra_search_when_every_chunk_is_clean(toolbox: FakeToolbox) -> None
 
     assert len(final_state["retrieved"]) == RESULT_COUNT
     assert len(toolbox.search_queries) == 1
+
+
+def test_reranking_keeps_the_k_best_scored_hits_and_records_their_scores() -> None:
+    hits = [clean_hit(rank) for rank in range(1, 5)]
+
+    ranked = keep_best_ranked(hits, [0.1, 2.5, -1.0, 1.2], k=2)
+
+    assert [(hit.chunk_id, hit.score) for hit in ranked] == [(2, 2.5), (4, 1.2)]

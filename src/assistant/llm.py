@@ -6,7 +6,7 @@ from huggingface_hub import try_to_load_from_cache
 from langchain_anthropic import ChatAnthropic
 from langchain_core.language_models import BaseChatModel
 from numpy.typing import NDArray
-from sentence_transformers import SentenceTransformer
+from sentence_transformers import CrossEncoder, SentenceTransformer
 
 from assistant.config import get_settings
 
@@ -25,9 +25,10 @@ def get_chat_model(role: ModelRole) -> BaseChatModel:
 @lru_cache
 def get_embedding_model() -> SentenceTransformer:
     settings = get_settings()
-    # A cached model is loaded without contacting the Hugging Face Hub, which adds seconds.
     model = SentenceTransformer(
-        settings.embedding_model, device="cpu", local_files_only=is_embedding_model_cached()
+        settings.embedding_model,
+        device="cpu",
+        local_files_only=is_cached_locally(settings.embedding_model),
     )
     actual_dimensions = model.get_embedding_dimension()
     if actual_dimensions != settings.embedding_dimensions:
@@ -38,9 +39,15 @@ def get_embedding_model() -> SentenceTransformer:
     return model
 
 
-def is_embedding_model_cached() -> bool:
-    cached_file = try_to_load_from_cache(get_settings().embedding_model, "modules.json")
-    return isinstance(cached_file, str)
+def is_cached_locally(model_name: str) -> bool:
+    # A cached model is loaded without contacting the Hugging Face Hub, which adds seconds.
+    return isinstance(try_to_load_from_cache(model_name, "config.json"), str)
+
+
+@lru_cache
+def get_reranker() -> CrossEncoder:
+    model_name = get_settings().reranker_model
+    return CrossEncoder(model_name, device="cpu", local_files_only=is_cached_locally(model_name))
 
 
 def embed_texts(texts: list[str]) -> FloatArray:
@@ -51,6 +58,15 @@ def embed_texts(texts: list[str]) -> FloatArray:
 
 def embed_query(query: str) -> FloatArray:
     return embed_texts([get_settings().embedding_query_prefix + query])[0]
+
+
+def embed_passages(passages: list[str]) -> FloatArray:
+    prefix = get_settings().embedding_passage_prefix
+    return embed_texts([prefix + passage for passage in passages])
+
+
+def rerank_scores(query: str, passages: list[str]) -> list[float]:
+    return get_reranker().predict([(query, passage) for passage in passages]).tolist()
 
 
 def count_tokens(text: str) -> int:

@@ -2,7 +2,7 @@ import time
 from uuid import uuid4
 
 import psycopg
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, ToolMessage
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import StateSnapshot
@@ -29,6 +29,7 @@ class CaseRun(BaseModel):
     citations: list[str] = []
     retrieved_doc_ids: list[str] = []
     retrieved_contexts: list[str] = []
+    tool_results: list[str] = []
     proposed_action: list[ProposedToolCall] = []
     write_tools_requested: list[str] = []
     input_blocked: bool = False
@@ -67,10 +68,11 @@ def run_from_snapshot(
     case: GoldenCase, snapshot: StateSnapshot, latency_seconds: float, tickets_changed: bool
 ) -> CaseRun:
     values = snapshot.values
+    turn_messages = messages_since_latest_question(values)
     accepted_answer = values["answer"] if values["verdict"] == "accepted" else None
     write_tools_requested = [
         call["name"]
-        for message in messages_since_latest_question(values)
+        for message in turn_messages
         if isinstance(message, AIMessage)
         for call in message.tool_calls
         if call["name"] in WRITE_TOOL_NAMES
@@ -81,6 +83,11 @@ def run_from_snapshot(
         citations=accepted_answer.citations if accepted_answer else [],
         retrieved_doc_ids=[hit.doc_id for hit in values["retrieved"]],
         retrieved_contexts=[hit.content for hit in values["retrieved"]],
+        tool_results=[
+            f"{message.name} ({message.status}): {message.text}"
+            for message in turn_messages
+            if isinstance(message, ToolMessage)
+        ],
         proposed_action=snapshot.interrupts[0].value["proposed_action"]
         if snapshot.interrupts
         else [],

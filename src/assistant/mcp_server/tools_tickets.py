@@ -9,8 +9,8 @@ from pydantic import BaseModel
 from assistant.config import get_settings
 from assistant.mcp_server.auth import (
     caller_user_id,
-    require_known_user,
     require_ticket_write_permission,
+    visible_ticket_creator_for_user,
 )
 
 TicketCategory = Literal["billing", "bug", "account", "it", "question"]
@@ -52,23 +52,34 @@ def create_tickets_table(connection: psycopg.Connection) -> None:
     )
 
 
+# A NULL creator means the caller may read every ticket (see visible_ticket_creator in auth.py).
+VISIBLE_TO_CALLER = "(%(created_by)s::text IS NULL OR created_by = %(created_by)s)"
+
+
 def fetch_tickets(
-    connection: psycopg.Connection, status: TicketStatus | None, limit: int
+    connection: psycopg.Connection,
+    status: TicketStatus | None,
+    limit: int,
+    created_by: str | None,
 ) -> list[Ticket]:
     with connection.cursor(row_factory=class_row(Ticket)) as cursor:
         cursor.execute(
             f"SELECT {TICKET_COLUMNS} FROM tickets "
-            "WHERE %(status)s::text IS NULL OR status = %(status)s "
+            f"WHERE (%(status)s::text IS NULL OR status = %(status)s) AND {VISIBLE_TO_CALLER} "
             "ORDER BY updated_at DESC LIMIT %(limit)s",
-            {"status": status, "limit": limit},
+            {"status": status, "limit": limit, "created_by": created_by},
         )
         return cursor.fetchall()
 
 
-def fetch_ticket(connection: psycopg.Connection, ticket_id: int) -> Ticket:
+def fetch_ticket(connection: psycopg.Connection, ticket_id: int, created_by: str | None) -> Ticket:
     with connection.cursor(row_factory=class_row(Ticket)) as cursor:
-        cursor.execute(f"SELECT {TICKET_COLUMNS} FROM tickets WHERE id = %s", (ticket_id,))
+        cursor.execute(
+            f"SELECT {TICKET_COLUMNS} FROM tickets WHERE id = %(id)s AND {VISIBLE_TO_CALLER}",
+            {"id": ticket_id, "created_by": created_by},
+        )
         ticket = cursor.fetchone()
+    # A ticket the caller may not read is reported exactly like a missing one.
     if ticket is None:
         raise LookupError(f"Ticket {ticket_id} does not exist")
     return ticket
@@ -115,15 +126,15 @@ def change_ticket(
 def list_tickets(context: Context, status: TicketStatus | None = None) -> list[Ticket]:
     """List the most recently updated tickets, optionally only those with the given status."""
     with psycopg.connect(get_settings().database_url) as connection:
-        require_known_user(connection, caller_user_id(context))
-        return fetch_tickets(connection, status, get_settings().ticket_list_limit)
+        created_by = visible_ticket_creator_for_user(connection, caller_user_id(context))
+        return fetch_tickets(connection, status, get_settings().ticket_list_limit, created_by)
 
 
 def get_ticket(context: Context, ticket_id: int) -> Ticket:
     """Get one ticket by its numeric id."""
     with psycopg.connect(get_settings().database_url) as connection:
-        require_known_user(connection, caller_user_id(context))
-        return fetch_ticket(connection, ticket_id)
+        created_by = visible_ticket_creator_for_user(connection, caller_user_id(context))
+        return fetch_ticket(connection, ticket_id, created_by)
 
 
 def create_ticket(

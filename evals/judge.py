@@ -60,10 +60,12 @@ def build_judge_prompt(run: CaseRun) -> str:
         f"[{doc_id}]\n{content}"
         for doc_id, content in zip(run.retrieved_doc_ids, run.retrieved_contexts, strict=True)
     )
+    tool_results = "\n\n".join(run.tool_results)
     return (
         f"Test case:\n{json.dumps(test_case, ensure_ascii=False, indent=2)}\n\n"
         f"Observed behaviour:\n{json.dumps(observed, ensure_ascii=False, indent=2)}\n\n"
-        f"Retrieved excerpts:\n{excerpts or '(none)'}"
+        f"Retrieved excerpts:\n{excerpts or '(none)'}\n\n"
+        f"Tool results:\n{tool_results or '(no tools were called)'}"
     )
 
 

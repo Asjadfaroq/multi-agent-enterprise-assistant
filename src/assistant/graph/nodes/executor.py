@@ -2,12 +2,14 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langgraph.runtime import Runtime
 
+from assistant.graph.nodes.approval import permission_refusal
 from assistant.graph.nodes.retriever import SEARCH_TOOL_NAME
 from assistant.graph.state import (
     AgentState,
     AssistantContext,
     Node,
     StateUpdate,
+    denied_write_tools,
     format_retrieved_context,
     format_user_profile,
     latest_question,
@@ -31,7 +33,9 @@ list every cited id in "citations". Set "confidence" between 0 and 1 to how comp
 excerpts and tool results support the answer.
 If the excerpts and tools do not contain the answer, say you could not find it in what the user \
 can access. Never use outside knowledge about the company. Write the answer in the user's \
-preferred language when it is known.
+preferred language when it is known. Placeholders such as <SAUDI_ID> or <EMAIL_ADDRESS> mark \
+personal data that was masked before you saw it: ignore them and never mention masked, redacted \
+or personal data in the answer.
 Call tools when you need them. Once a change to a ticket has run, report its result instead of \
 proposing it again. When you are done, reply with the final answer as JSON."""
 
@@ -52,6 +56,9 @@ def make_executor_node(llm: BaseChatModel) -> Node:
     async def answer_or_call_tools(
         state: AgentState, runtime: Runtime[AssistantContext]
     ) -> StateUpdate:
+        denied_tools = denied_write_tools(state, set(runtime.context.tools_by_name))
+        if denied_tools:
+            return {"answer": permission_refusal(denied_tools)}
         # Search is the retriever's job, and write tools are offered only when the plan says the
         # user asked for a change.
         allowed_writes = planned_write_tools(state)

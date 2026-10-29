@@ -13,6 +13,7 @@ from assistant.graph.state import (
     pending_tool_calls,
     planned_write_tools,
 )
+from assistant.guardrails.schema import Answer
 from assistant.mcp_server.auth import WRITE_TOOL_NAMES
 
 REJECTED_ACTION_MESSAGE = "The approver rejected this action, so nothing was changed."
@@ -22,12 +23,27 @@ UNREQUESTED_WRITE_MESSAGE = (
 WRITE_ALREADY_DONE_MESSAGE = (
     "Not run: an approved change already ran in this turn. Report its result to the user."
 )
+WRITE_ACTION_DESCRIPTIONS = {"create_ticket": "create tickets", "update_ticket": "change tickets"}
 CANCELLED_ANSWER = "The approver rejected {tools}, so nothing was changed."
 
 
 class ProposedToolCall(BaseModel):
     tool: str
     args: dict[str, Any]
+
+
+def permission_refusal(denied_tools: list[str]) -> Answer:
+    # A fixed reply: in an eval run the model's own account of its tools was wrong and the
+    # reviewer rejected it, so the user got a generic fallback instead of the actual reason.
+    actions = " or ".join(WRITE_ACTION_DESCRIPTIONS[tool] for tool in denied_tools)
+    return Answer(
+        text=(
+            f"You don't have permission to {actions}, so I haven't made any change. "
+            "A support agent or a manager can do it for you."
+        ),
+        citations=[],
+        confidence=1.0,
+    )
 
 
 def refuse_tool_calls(calls: list[ToolCall], reason: str) -> list[ToolMessage]:

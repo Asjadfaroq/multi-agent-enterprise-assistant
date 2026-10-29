@@ -12,7 +12,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 from assistant.config import get_settings
 from assistant.guardrails.pii import mask_pii_in_tool_result
-from assistant.llm import get_embedding_model
+from assistant.llm import get_embedding_model, get_reranker
 from assistant.mcp_server.auth import (
     WRITE_TOOL_NAMES,
     Role,
@@ -101,8 +101,9 @@ def build_http_app() -> ASGIApp:
 def main() -> None:
     settings = get_settings()
     http_app = build_http_app()
-    # Load the embedding model before serving so no caller pays for it on their first search.
+    # Load both models before serving so no caller pays for loading them on their first search.
     get_embedding_model()
+    get_reranker()
     uvicorn.run(
         http_app, host=settings.mcp_server_host, port=settings.mcp_server_port, log_level="warning"
     )

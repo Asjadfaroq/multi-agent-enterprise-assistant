@@ -20,6 +20,8 @@ ALLOWED_ACLS_BY_ROLE: dict[Role, tuple[Acl, ...]] = {
 
 WRITE_TOOL_NAMES = frozenset({"create_ticket", "update_ticket"})
 TICKET_WRITER_ROLES: frozenset[Role] = frozenset({"agent", "manager"})
+# Every other role only sees tickets it created.
+TICKET_READ_ALL_ROLES: frozenset[Role] = frozenset({"agent", "manager"})
 DOCUMENT_INGEST_ROLES: frozenset[Role] = frozenset({"manager"})
 
 # Set by the API from its own authenticated caller; the model never supplies it. The MCP server
@@ -79,6 +81,15 @@ def allowed_acls_for_role(role: Role) -> list[Acl]:
 
 def allowed_acls_for_user(connection: psycopg.Connection, user_id: str) -> list[Acl]:
     return allowed_acls_for_role(role_for_user(connection, user_id))
+
+
+def visible_ticket_creator(role: Role, user_id: str) -> str | None:
+    """Whose tickets the user may read: only their own, or every ticket when this returns None."""
+    return None if role in TICKET_READ_ALL_ROLES else user_id
+
+
+def visible_ticket_creator_for_user(connection: psycopg.Connection, user_id: str) -> str | None:
+    return visible_ticket_creator(role_for_user(connection, user_id), user_id)
 
 
 def can_write_tickets(role: Role) -> bool:

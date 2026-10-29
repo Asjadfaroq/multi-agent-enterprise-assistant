@@ -9,6 +9,7 @@ from assistant.graph.state import (
     Node,
     StateUpdate,
     completed_write_actions,
+    denied_write_tools,
     format_retrieved_context,
     format_tool_results,
     latest_question,
@@ -56,6 +57,11 @@ def make_reviewer_node(llm: BaseChatModel, max_revisions: int) -> Node:
         if answer is None:
             raise ValueError("Reviewer ran before the executor produced an answer")
         available_tools = sorted(runtime.context.tools_by_name)
+        if denied_write_tools(state, set(available_tools)):
+            # The executor answered with the fixed permission refusal, which states only what the
+            # user's role allows, so there is nothing for a model to verify.
+            review = Review(supported=True, reason="Fixed refusal for a write the role lacks.")
+            return {"review": review, "verdict": "accepted", "messages": [AIMessage(answer.text)]}
         review = await ask_for_json(
             llm,
             REVIEWER_INSTRUCTIONS,

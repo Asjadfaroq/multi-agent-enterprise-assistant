@@ -11,7 +11,7 @@ from ragas.metrics.collections import AnswerRelevancy, ContextPrecisionWithRefer
 from ragas.metrics.result import MetricResult
 
 from assistant.config import get_settings
-from assistant.llm import embed_texts
+from assistant.llm import embed_query
 from evals.golden_cases import Category
 from evals.run_cases import CaseRun
 
@@ -25,11 +25,11 @@ class RagasScores(BaseModel):
     errors: list[str] = []
 
 
-class BgeRagasEmbeddings(BaseRagasEmbedding):
-    """Lets ragas use the same local bge model the knowledge base is embedded with."""
+class KnowledgeBaseEmbeddings(BaseRagasEmbedding):
+    """Lets ragas use the local embedding model. Ragas only embeds questions here."""
 
     def embed_text(self, text: str, **kwargs: Any) -> list[float]:
-        return embed_texts([text])[0].tolist()
+        return embed_query(text).tolist()
 
     async def aembed_text(self, text: str, **kwargs: Any) -> list[float]:
         return self.embed_text(text)
@@ -54,9 +54,10 @@ def build_ragas_metrics() -> RagasMetrics:
     # ragas always sends temperature and top_p, which this Anthropic SDK rejects for the model.
     for unsupported_argument in ("temperature", "top_p"):
         llm.model_args.pop(unsupported_argument)
+    llm.model_args["max_tokens"] = settings.eval_ragas_max_tokens
     return RagasMetrics(
         faithfulness=Faithfulness(llm=llm),
-        answer_relevancy=AnswerRelevancy(llm=llm, embeddings=BgeRagasEmbeddings()),
+        answer_relevancy=AnswerRelevancy(llm=llm, embeddings=KnowledgeBaseEmbeddings()),
         context_precision=ContextPrecisionWithReference(llm=llm),
     )
 

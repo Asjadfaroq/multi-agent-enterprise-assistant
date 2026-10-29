@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 
 from assistant.config import get_settings
 from assistant.knowledge.chunking import Acl
-from assistant.llm import FloatArray, embed_query
+from assistant.llm import FloatArray, embed_query, rerank_scores
 from assistant.mcp_server.auth import allowed_acls_for_user, caller_user_id
 
 
@@ -43,14 +43,27 @@ def search_chunks(
     ]
 
 
+def keep_best_ranked(
+    hits: list[SearchHit], relevance_scores: list[float], k: int
+) -> list[SearchHit]:
+    ranked = sorted(
+        zip(hits, relevance_scores, strict=True), key=lambda pair: pair[1], reverse=True
+    )
+    return [hit.model_copy(update={"score": score}) for hit, score in ranked[:k]]
+
+
 def search_documents(
     context: Context,
     query: str,
     k: Annotated[int, Field(ge=1)] = get_settings().search_result_count,
 ) -> list[SearchHit]:
     """Search the company documents the current user may read and return the best excerpts."""
-    query_embedding = embed_query(query)
+    candidate_count = max(k, get_settings().rerank_candidate_count)
     with psycopg.connect(get_settings().database_url) as connection:
         register_vector(connection)
         allowed_acls = allowed_acls_for_user(connection, caller_user_id(context))
-        return search_chunks(connection, query_embedding, allowed_acls, k)
+        candidates = search_chunks(connection, embed_query(query), allowed_acls, candidate_count)
+    # The cross-encoder reads question and passage together, which ranks far better than vector
+    # similarity alone on a small corpus; its score replaces the cosine score.
+    scores = rerank_scores(query, [candidate.content for candidate in candidates])
+    return keep_best_ranked(candidates, scores, k)

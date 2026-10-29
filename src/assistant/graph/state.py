@@ -102,6 +102,11 @@ def planned_write_tools(state: AgentState) -> set[str]:
     return WRITE_TOOL_NAMES & set(plan.needs_tools) if plan is not None else set()
 
 
+def denied_write_tools(state: AgentState, available_tool_names: set[str]) -> list[str]:
+    """Writes the user asked for that their role's MCP session does not offer."""
+    return sorted(planned_write_tools(state) - available_tool_names)
+
+
 def pending_tool_calls(state: AgentState) -> list[ToolCall]:
     last_message = state["messages"][-1]
     return list(last_message.tool_calls) if isinstance(last_message, AIMessage) else []

@@ -24,18 +24,23 @@ class Settings(BaseSettings):
     max_review_revisions: int = Field(default=1, ge=0)
     max_profile_facts_per_turn: int = Field(default=2, gt=0)
 
-    embedding_model: str = "BAAI/bge-small-en-v1.5"
+    # Multilingual so Arabic questions find English documents; e5 models are trained with these
+    # prefixes on queries and on passages.
+    embedding_model: str = "intfloat/multilingual-e5-small"
     embedding_dimensions: int = 384
-    # bge models are trained with this instruction on queries; documents are embedded without it.
-    embedding_query_prefix: str = "Represent this sentence for searching relevant passages: "
+    embedding_query_prefix: str = "query: "
+    embedding_passage_prefix: str = "passage: "
     search_result_count: int = Field(default=5, gt=0)
+    # Vector search fetches this many candidates; the cross-encoder keeps the best k of them.
+    reranker_model: str = "cross-encoder/mmarco-mMiniLMv2-L12-H384-v1"
+    rerank_candidate_count: int = Field(default=15, gt=0)
     ticket_list_limit: int = Field(default=20, gt=0)
 
     # Base64-looking runs at least this long are decoded and checked for hidden instructions.
     injection_encoded_payload_min_length: int = Field(default=40, gt=0)
     pii_phone_regions: tuple[str, ...] = ("SA", "PT", "US", "GB")
 
-    # bge-small truncates input at 512 tokens, so chunks must stay below that.
+    # The embedding model truncates input at 512 tokens, prefix and special tokens included.
     chunk_size_tokens: int = Field(default=500, gt=0, le=510)
 
     sample_docs_dir: Path = PROJECT_ROOT / "data" / "sample_docs"
@@ -48,6 +53,8 @@ class Settings(BaseSettings):
     eval_case_min_judge_score: int = Field(default=3, ge=1, le=5)
     eval_arabic_min_letter_ratio: float = Field(default=0.5, ge=0, le=1)
     eval_scoring_concurrency: int = Field(default=4, gt=0)
+    # ragas' default of 1024 output tokens cut off statement extraction on longer answers.
+    eval_ragas_max_tokens: int = Field(default=8192, gt=0)
 
     langfuse_public_key: str = ""
     langfuse_secret_key: str = ""

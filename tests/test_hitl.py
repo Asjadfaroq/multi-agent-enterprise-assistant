@@ -13,6 +13,7 @@ from assistant.graph.nodes.approval import (
     REJECTED_ACTION_MESSAGE,
     UNREQUESTED_WRITE_MESSAGE,
     WRITE_ALREADY_DONE_MESSAGE,
+    permission_refusal,
 )
 from assistant.graph.state import AssistantContext, new_turn_state
 
@@ -147,18 +148,17 @@ def test_read_tool_call_runs_without_pausing(
     assert [message.name for message in tool_messages(graph)] == ["list_tickets"]
 
 
-def test_viewer_cannot_reach_a_write_tool_even_if_the_model_calls_one(
+def test_viewer_asking_for_a_write_gets_the_fixed_permission_refusal(
     build_scripted_graph: GraphBuilder, toolbox: FakeToolbox
 ) -> None:
-    replies = [PLAN_TICKET_WRITE, CREATE_TICKET_CALL, *ACCEPTED_ANSWER_REPLIES]
-    graph = checkpointed_graph(build_scripted_graph, replies)
+    graph = checkpointed_graph(build_scripted_graph, [PLAN_TICKET_WRITE, NO_PROFILE_FACTS])
 
     start_turn(graph, toolbox.context(can_write_tickets=False), user_id="nora")
 
-    [refusal] = tool_messages(graph)
-    assert thread_snapshot(graph).interrupts == ()
-    assert refusal.status == "error" and "not available" in refusal.text
-    assert toolbox.created_tickets == []
+    snapshot = thread_snapshot(graph)
+    assert snapshot.interrupts == () and snapshot.values["verdict"] == "accepted"
+    assert snapshot.values["messages"][-1].text == permission_refusal(["create_ticket"]).text
+    assert tool_messages(graph) == [] and toolbox.created_tickets == []
 
 
 def test_write_the_user_did_not_ask_for_is_refused_without_a_pause(
