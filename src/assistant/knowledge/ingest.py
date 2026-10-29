@@ -9,7 +9,7 @@ from pydantic import ValidationError
 
 from assistant.config import get_settings
 from assistant.knowledge.chunking import Chunk, Document, chunk_document
-from assistant.llm import Embeddings, count_tokens, embed_texts
+from assistant.llm import FloatArray, count_tokens, embed_texts
 
 
 def load_documents(docs_dir: Path) -> list[Document]:
@@ -57,7 +57,7 @@ def create_chunks_table(connection: psycopg.Connection, dimensions: int) -> None
 
 
 def replace_document_chunks(
-    connection: psycopg.Connection, doc_id: str, chunks: list[Chunk], embeddings: Embeddings
+    connection: psycopg.Connection, doc_id: str, chunks: list[Chunk], embeddings: FloatArray
 ) -> None:
     connection.execute("DELETE FROM chunks WHERE doc_id = %s", (doc_id,))
     with connection.cursor() as cursor:
