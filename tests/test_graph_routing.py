@@ -2,7 +2,7 @@ import asyncio
 import itertools
 import json
 
-from conftest import FakeToolbox, GraphBuilder, ScriptedChatModel
+from conftest import NO_PROFILE_FACTS, FakeToolbox, GraphBuilder, ScriptedChatModel
 from langchain_core.messages import AIMessage
 
 from assistant.graph.build import build_graph
@@ -55,11 +55,11 @@ def run_graph(
 def test_company_question_is_planned_retrieved_drafted_and_reviewed(
     build_scripted_graph: GraphBuilder, toolbox: FakeToolbox
 ) -> None:
-    replies = [PLAN_WITH_SEARCH, GROUNDED_DRAFT, SUPPORTED_REVIEW]
+    replies = [PLAN_WITH_SEARCH, GROUNDED_DRAFT, SUPPORTED_REVIEW, NO_PROFILE_FACTS]
 
     visited, answer = run_graph(build_scripted_graph, toolbox, replies)
 
-    assert visited == ["planner", "retriever", "executor", "reviewer"]
+    assert visited == ["planner", "retriever", "executor", "reviewer", "remember"]
     assert answer == "Maternity leave is 14 weeks [parental-leave-policy]."
     assert toolbox.search_queries == [QUESTION]
 
@@ -67,11 +67,11 @@ def test_company_question_is_planned_retrieved_drafted_and_reviewed(
 def test_small_talk_skips_document_search(
     build_scripted_graph: GraphBuilder, toolbox: FakeToolbox
 ) -> None:
-    replies = [PLAN_WITHOUT_TOOLS, GROUNDED_DRAFT, SUPPORTED_REVIEW]
+    replies = [PLAN_WITHOUT_TOOLS, GROUNDED_DRAFT, SUPPORTED_REVIEW, NO_PROFILE_FACTS]
 
     visited, _ = run_graph(build_scripted_graph, toolbox, replies)
 
-    assert visited == ["planner", "executor", "reviewer"]
+    assert visited == ["planner", "executor", "reviewer", "remember"]
     assert toolbox.search_queries == []
 
 
@@ -84,11 +84,20 @@ def test_unsupported_draft_is_revised_once_then_accepted(
         UNSUPPORTED_REVIEW,
         REVISED_DRAFT,
         SUPPORTED_REVIEW,
+        NO_PROFILE_FACTS,
     ]
 
     visited, answer = run_graph(build_scripted_graph, toolbox, replies)
 
-    assert visited == ["planner", "retriever", "executor", "reviewer", "executor", "reviewer"]
+    assert visited == [
+        "planner",
+        "retriever",
+        "executor",
+        "reviewer",
+        "executor",
+        "reviewer",
+        "remember",
+    ]
     assert answer == "It is 14 weeks, fully paid [parental-leave-policy]."
 
 
@@ -101,11 +110,20 @@ def test_draft_still_unsupported_after_revision_ends_with_fallback_answer(
         UNSUPPORTED_REVIEW,
         REVISED_DRAFT,
         UNSUPPORTED_REVIEW,
+        NO_PROFILE_FACTS,
     ]
 
     visited, answer = run_graph(build_scripted_graph, toolbox, replies)
 
-    assert visited == ["planner", "retriever", "executor", "reviewer", "executor", "reviewer"]
+    assert visited == [
+        "planner",
+        "retriever",
+        "executor",
+        "reviewer",
+        "executor",
+        "reviewer",
+        "remember",
+    ]
     assert answer == UNSUPPORTED_ANSWER_FALLBACK
 
 
@@ -126,6 +144,7 @@ def test_executor_history_is_only_appended_to_across_tool_calls_and_revisions(
                 UNSUPPORTED_REVIEW,
                 REVISED_DRAFT,
                 SUPPORTED_REVIEW,
+                NO_PROFILE_FACTS,
             ]
         )
     )

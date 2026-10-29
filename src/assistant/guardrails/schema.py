@@ -29,6 +29,18 @@ class Review(BaseModel):
     reason: str
 
 
+ProfileFactKey = Literal["preferred_language", "team"]
+
+
+class ProfileFact(BaseModel):
+    key: ProfileFactKey
+    value: str
+
+
+class ProfileFacts(BaseModel):
+    facts: list[ProfileFact]
+
+
 def parse_model_output[OutputModel: BaseModel](
     reply: str, output_model: type[OutputModel]
 ) -> OutputModel:

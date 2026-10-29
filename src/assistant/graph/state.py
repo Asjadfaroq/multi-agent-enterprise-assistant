@@ -1,13 +1,14 @@
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Annotated, Any, Literal, TypedDict
+from typing import Annotated, Any, Literal, Protocol, TypedDict
 
 from langchain_core.messages import AIMessage, AnyMessage, HumanMessage, ToolCall, ToolMessage
 from langchain_core.tools import BaseTool
 from langgraph.graph.message import add_messages
 from langgraph.runtime import Runtime
 
-from assistant.guardrails.schema import Draft, Plan, Review
+from assistant.guardrails.schema import Draft, Plan, ProfileFact, Review
+from assistant.mcp_server.auth import WRITE_TOOL_NAMES
 from assistant.mcp_server.tools_kb import SearchHit
 
 ReviewVerdict = Literal["accepted", "revise", "give_up"]
@@ -20,6 +21,7 @@ REVIEWER_FEEDBACK_NAME = "reviewer"
 class AgentState(TypedDict):
     messages: Annotated[list[AnyMessage], add_messages]
     user_id: str
+    user_profile: list[ProfileFact]
     plan: Plan | None
     retrieved: list[SearchHit]
     draft: Draft | None
@@ -28,11 +30,18 @@ class AgentState(TypedDict):
     revision_count: int
 
 
+class ProfileStore(Protocol):
+    async def load_facts(self, user_id: str) -> list[ProfileFact]: ...
+
+    async def save_facts(self, user_id: str, facts: list[ProfileFact]) -> None: ...
+
+
 @dataclass(frozen=True)
 class AssistantContext:
-    """Per-request dependencies: the MCP tools the requesting user's server session exposes."""
+    """Per-request dependencies: the requesting user's MCP tools and long-term profile."""
 
     tools_by_name: dict[str, BaseTool]
+    profile_store: ProfileStore
 
 
 StateUpdate = dict[str, Any]
@@ -46,6 +55,7 @@ def new_turn_state(user_id: str, question: str) -> AgentState:
     return AgentState(
         messages=[HumanMessage(question)],
         user_id=user_id,
+        user_profile=[],
         plan=None,
         retrieved=[],
         draft=None,
@@ -75,9 +85,25 @@ def messages_since_latest_question(state: AgentState) -> list[AnyMessage]:
     return state["messages"][latest_question_index(state) + 1 :]
 
 
+def completed_write_actions(state: AgentState) -> list[str]:
+    return [
+        message.name
+        for message in messages_since_latest_question(state)
+        if isinstance(message, ToolMessage)
+        and message.name in WRITE_TOOL_NAMES
+        and message.status == "success"
+    ]
+
+
 def pending_tool_calls(state: AgentState) -> list[ToolCall]:
     last_message = state["messages"][-1]
     return list(last_message.tool_calls) if isinstance(last_message, AIMessage) else []
+
+
+def format_user_profile(facts: list[ProfileFact]) -> str:
+    if not facts:
+        return "(nothing known yet)"
+    return "\n".join(f"- {fact.key}: {fact.value}" for fact in facts)
 
 
 def format_retrieved_context(hits: list[SearchHit]) -> str:

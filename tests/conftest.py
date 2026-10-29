@@ -1,6 +1,8 @@
-from collections.abc import Callable, Sequence
+import json
+from collections.abc import Callable, Iterator, Sequence
 from typing import Any
 
+import psycopg
 import pytest
 from langchain_core.callbacks import CallbackManagerForLLMRun
 from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
@@ -12,10 +14,14 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph.state import CompiledStateGraph
 from pydantic import Field
 
+from assistant.config import get_settings
 from assistant.graph.build import build_graph
 from assistant.graph.state import AssistantContext
+from assistant.guardrails.schema import ProfileFact
 from assistant.mcp_server.tools_kb import SearchHit
 
+DB_CONNECT_TIMEOUT_SECONDS = 2
+NO_PROFILE_FACTS = json.dumps({"facts": []})
 LEAVE_POLICY_HIT = SearchHit(
     doc_id="parental-leave-policy",
     acl="hr",
@@ -46,12 +52,25 @@ class ScriptedChatModel(GenericFakeChatModel):
         return self
 
 
+class InMemoryProfileStore:
+    def __init__(self) -> None:
+        self.facts_by_user: dict[str, dict[str, str]] = {}
+
+    async def load_facts(self, user_id: str) -> list[ProfileFact]:
+        facts = self.facts_by_user.get(user_id, {})
+        return [ProfileFact(key=key, value=value) for key, value in sorted(facts.items())]
+
+    async def save_facts(self, user_id: str, facts: list[ProfileFact]) -> None:
+        self.facts_by_user.setdefault(user_id, {}).update({fact.key: fact.value for fact in facts})
+
+
 class FakeToolbox:
-    """In-memory stand-ins for the MCP tools, recording every call."""
+    """In-memory stand-ins for the MCP tools and profile store, recording every call."""
 
     def __init__(self) -> None:
         self.search_queries: list[str] = []
         self.created_tickets: list[dict[str, Any]] = []
+        self.profile_store = InMemoryProfileStore()
 
     async def search_documents(self, query: str) -> tuple[str, dict[str, Any]]:
         self.search_queries.append(query)
@@ -62,9 +81,9 @@ class FakeToolbox:
         return str(self.created_tickets)
 
     async def create_ticket(self, title: str, category: str, priority: str) -> str:
-        ticket = {"id": len(self.created_tickets) + 1, "title": title}
-        self.created_tickets.append(ticket | {"category": category, "priority": priority})
-        return f"Created ticket {ticket['id']}"
+        ticket_id = len(self.created_tickets) + 1
+        self.created_tickets.append({"id": ticket_id, "title": title, "priority": priority})
+        return f"Created {category} ticket {ticket_id}"
 
     def context(self, can_write_tickets: bool) -> AssistantContext:
         tools: list[BaseTool] = [
@@ -84,7 +103,9 @@ class FakeToolbox:
                     coroutine=self.create_ticket, name="create_ticket", description="Create."
                 )
             )
-        return AssistantContext(tools_by_name={tool.name: tool for tool in tools})
+        return AssistantContext(
+            tools_by_name={tool.name: tool for tool in tools}, profile_store=self.profile_store
+        )
 
 
 GraphBuilder = Callable[[list[str | AIMessage], BaseCheckpointSaver | None], CompiledStateGraph]
@@ -106,3 +127,34 @@ def build_scripted_graph() -> GraphBuilder:
         )
 
     return build
+
+
+def connect_or_skip(autocommit: bool) -> psycopg.Connection:
+    database_url = get_settings().database_url
+    try:
+        return psycopg.connect(
+            database_url, autocommit=autocommit, connect_timeout=DB_CONNECT_TIMEOUT_SECONDS
+        )
+    except psycopg.OperationalError as error:
+        pytest.skip(f"Postgres is not reachable at {database_url}: {error}")
+
+
+@pytest.fixture
+def committed_users() -> Iterator[Callable[[str, str], None]]:
+    """Adds users visible to other connections (the API's) and deletes them afterwards."""
+    connection = connect_or_skip(autocommit=True)
+    added_user_ids: list[str] = []
+
+    def add_user(user_id: str, role: str) -> None:
+        connection.execute(
+            "INSERT INTO users (id, role) VALUES (%s, %s) "
+            "ON CONFLICT (id) DO UPDATE SET role = EXCLUDED.role",
+            (user_id, role),
+        )
+        added_user_ids.append(user_id)
+
+    try:
+        yield add_user
+    finally:
+        connection.execute("DELETE FROM users WHERE id = ANY(%s)", (added_user_ids,))
+        connection.close()

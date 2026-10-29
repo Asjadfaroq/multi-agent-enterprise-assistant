@@ -1,38 +1,37 @@
+import asyncio
 from collections.abc import Iterator
 
 import numpy as np
 import psycopg
 import pytest
+from conftest import connect_or_skip
+from mcp.server.fastmcp import FastMCP
 from pgvector.psycopg import register_vector
 
 from assistant.config import get_settings
 from assistant.knowledge.chunking import Chunk
 from assistant.knowledge.ingest import create_chunks_table, replace_document_chunks
 from assistant.mcp_server.auth import (
+    Role,
     allowed_acls_for_role,
     allowed_acls_for_user,
     create_users_table,
-    current_user_id,
+    require_ingest_permission,
     require_ticket_write_permission,
+    user_id_from_headers,
 )
+from assistant.mcp_server.server import build_server, tools_visible_to_role
 from assistant.mcp_server.tools_kb import search_chunks
 from assistant.mcp_server.tools_tickets import create_tickets_table, insert_ticket
 
-DB_CONNECT_TIMEOUT_SECONDS = 2
 SEARCH_EVERYTHING_K = 1000
 
 
 @pytest.fixture
 def connection() -> Iterator[psycopg.Connection]:
     """Real Postgres connection whose changes are rolled back after each test."""
-    settings = get_settings()
-    try:
-        connection = psycopg.connect(
-            settings.database_url, connect_timeout=DB_CONNECT_TIMEOUT_SECONDS
-        )
-    except psycopg.OperationalError as error:
-        pytest.skip(f"Postgres is not reachable at {settings.database_url}: {error}")
-    create_chunks_table(connection, settings.embedding_dimensions)
+    connection = connect_or_skip(autocommit=False)
+    create_chunks_table(connection, get_settings().embedding_dimensions)
     create_users_table(connection)
     create_tickets_table(connection)
     register_vector(connection)
@@ -95,14 +94,9 @@ def test_unknown_user_is_refused(connection: psycopg.Connection) -> None:
         allowed_acls_for_user(connection, "nobody")
 
 
-def test_search_without_caller_identity_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("ASSISTANT_USER_ID", "")
-    get_settings.cache_clear()
-    try:
-        with pytest.raises(PermissionError, match="ASSISTANT_USER_ID is not set"):
-            current_user_id()
-    finally:
-        get_settings.cache_clear()
+def test_tool_call_without_caller_header_is_refused() -> None:
+    with pytest.raises(PermissionError, match="X-User header is missing"):
+        user_id_from_headers({})
 
 
 def test_viewer_cannot_create_or_update_tickets(connection: psycopg.Connection) -> None:
@@ -119,3 +113,27 @@ def test_agent_ticket_is_recorded_as_created_by_the_agent(connection: psycopg.Co
     ticket = insert_ticket(connection, "Printer jam", "Floor 2 printer", "it", "P3", "test-agent")
 
     assert (ticket.created_by, ticket.status) == ("test-agent", "open")
+
+
+@pytest.mark.parametrize("role", ["viewer", "agent", "engineer", "hr_manager"])
+def test_only_managers_may_ingest_documents(connection: psycopg.Connection, role: str) -> None:
+    insert_test_user(connection, f"test-{role}", role)
+
+    with pytest.raises(PermissionError, match="may not ingest documents"):
+        require_ingest_permission(connection, f"test-{role}")
+
+
+def test_manager_may_ingest_documents(connection: psycopg.Connection) -> None:
+    insert_test_user(connection, "test-manager", "manager")
+
+    require_ingest_permission(connection, "test-manager")
+
+
+def test_mcp_server_lists_write_tools_only_for_ticket_writers() -> None:
+    all_tools = asyncio.run(FastMCP.list_tools(build_server()))
+
+    def visible_tool_names(role: Role) -> set[str]:
+        return {tool.name for tool in tools_visible_to_role(all_tools, role)}
+
+    assert {"create_ticket", "update_ticket"}.isdisjoint(visible_tool_names("viewer"))
+    assert {"create_ticket", "update_ticket"} <= visible_tool_names("agent")

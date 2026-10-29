@@ -29,6 +29,9 @@ dependencies = [
     "uvicorn",
 ]
 
+[project.scripts]
+assistant-mcp-server = "assistant.mcp_server.server:main"
+
 [dependency-groups]
 dev = [
     "pytest",

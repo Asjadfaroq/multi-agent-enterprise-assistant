@@ -1,5 +1,5 @@
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.runtime import Runtime
 
 from assistant.graph.state import (
@@ -8,13 +8,12 @@ from assistant.graph.state import (
     AssistantContext,
     ContextNode,
     StateUpdate,
+    completed_write_actions,
     format_retrieved_context,
     format_tool_results,
     latest_question,
-    messages_since_latest_question,
 )
 from assistant.guardrails.schema import Draft, Review, ask_for_json
-from assistant.mcp_server.auth import WRITE_TOOL_NAMES
 
 REVIEWER_INSTRUCTIONS = """\
 You check whether a draft answer is grounded in the document excerpts and tool results it was \
@@ -39,16 +38,6 @@ def build_reviewer_prompt(state: AgentState, draft: Draft, available_tools: list
         f"Tool results:\n{format_tool_results(state)}\n\n"
         f"Draft answer:\n{draft.text}"
     )
-
-
-def completed_write_actions(state: AgentState) -> list[str]:
-    return [
-        message.name
-        for message in messages_since_latest_question(state)
-        if isinstance(message, ToolMessage)
-        and message.name in WRITE_TOOL_NAMES
-        and message.status == "success"
-    ]
 
 
 def fallback_answer(state: AgentState) -> str:

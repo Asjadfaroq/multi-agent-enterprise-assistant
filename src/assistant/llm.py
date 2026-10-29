@@ -25,7 +25,10 @@ def get_chat_model(role: ModelRole) -> BaseChatModel:
 @lru_cache
 def get_embedding_model() -> SentenceTransformer:
     settings = get_settings()
-    model = SentenceTransformer(settings.embedding_model, device="cpu")
+    # A cached model is loaded without contacting the Hugging Face Hub, which adds seconds.
+    model = SentenceTransformer(
+        settings.embedding_model, device="cpu", local_files_only=is_embedding_model_cached()
+    )
     actual_dimensions = model.get_embedding_dimension()
     if actual_dimensions != settings.embedding_dimensions:
         raise ValueError(

@@ -1,6 +1,14 @@
 from langchain_core.language_models import BaseChatModel
+from langgraph.runtime import Runtime
 
-from assistant.graph.state import AgentState, Node, StateUpdate, latest_question
+from assistant.graph.state import (
+    AgentState,
+    AssistantContext,
+    ContextNode,
+    StateUpdate,
+    format_user_profile,
+    latest_question,
+)
 from assistant.guardrails.schema import Plan, ask_for_json
 
 PLANNER_INSTRUCTIONS = """\
@@ -13,12 +21,18 @@ Available tools:
 
 List the steps needed to answer and the tools those steps need. Use search_documents for any \
 question about the company, its policies, products or systems, and the ticket tools for \
-anything about tickets. Use no tools for greetings or small talk."""
+anything about tickets. Use no tools for greetings or small talk. Take what is known about the \
+user into account, for example by planning to answer in their preferred language."""
 
 
-def make_planner_node(llm: BaseChatModel) -> Node:
-    async def plan_answer(state: AgentState) -> StateUpdate:
-        plan = await ask_for_json(llm, PLANNER_INSTRUCTIONS, latest_question(state), Plan)
-        return {"plan": plan}
+def make_planner_node(llm: BaseChatModel) -> ContextNode:
+    async def plan_answer(state: AgentState, runtime: Runtime[AssistantContext]) -> StateUpdate:
+        user_profile = await runtime.context.profile_store.load_facts(state["user_id"])
+        prompt = (
+            f"What we know about the user:\n{format_user_profile(user_profile)}\n\n"
+            f"Question: {latest_question(state)}"
+        )
+        plan = await ask_for_json(llm, PLANNER_INSTRUCTIONS, prompt, Plan)
+        return {"plan": plan, "user_profile": user_profile}
 
     return plan_answer

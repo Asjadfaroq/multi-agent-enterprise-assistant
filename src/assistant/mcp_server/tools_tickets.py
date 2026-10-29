@@ -2,12 +2,13 @@ from datetime import datetime
 from typing import Literal
 
 import psycopg
+from mcp.server.fastmcp import Context
 from psycopg.rows import class_row
 from pydantic import BaseModel
 
 from assistant.config import get_settings
 from assistant.mcp_server.auth import (
-    current_user_id,
+    caller_user_id,
     require_known_user,
     require_ticket_write_permission,
 )
@@ -111,34 +112,41 @@ def change_ticket(
     return ticket
 
 
-def list_tickets(status: TicketStatus | None = None) -> list[Ticket]:
+def list_tickets(context: Context, status: TicketStatus | None = None) -> list[Ticket]:
     """List the most recently updated tickets, optionally only those with the given status."""
     with psycopg.connect(get_settings().database_url) as connection:
-        require_known_user(connection, current_user_id())
+        require_known_user(connection, caller_user_id(context))
         return fetch_tickets(connection, status, get_settings().ticket_list_limit)
 
 
-def get_ticket(ticket_id: int) -> Ticket:
+def get_ticket(context: Context, ticket_id: int) -> Ticket:
     """Get one ticket by its numeric id."""
     with psycopg.connect(get_settings().database_url) as connection:
-        require_known_user(connection, current_user_id())
+        require_known_user(connection, caller_user_id(context))
         return fetch_ticket(connection, ticket_id)
 
 
 def create_ticket(
-    title: str, description: str, category: TicketCategory, priority: TicketPriority
+    context: Context,
+    title: str,
+    description: str,
+    category: TicketCategory,
+    priority: TicketPriority,
 ) -> Ticket:
     """Create a ticket. Requires human approval before it runs."""
-    user_id = current_user_id()
+    user_id = caller_user_id(context)
     with psycopg.connect(get_settings().database_url) as connection:
         require_ticket_write_permission(connection, user_id)
         return insert_ticket(connection, title, description, category, priority, user_id)
 
 
 def update_ticket(
-    ticket_id: int, status: TicketStatus | None = None, priority: TicketPriority | None = None
+    context: Context,
+    ticket_id: int,
+    status: TicketStatus | None = None,
+    priority: TicketPriority | None = None,
 ) -> Ticket:
     """Change a ticket's status and/or priority. Requires human approval before it runs."""
     with psycopg.connect(get_settings().database_url) as connection:
-        require_ticket_write_permission(connection, current_user_id())
+        require_ticket_write_permission(connection, caller_user_id(context))
         return change_ticket(connection, ticket_id, status, priority)

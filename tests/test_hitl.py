@@ -1,17 +1,19 @@
 import asyncio
 import json
-from typing import Any
 
-from conftest import FakeToolbox, GraphBuilder
+from conftest import NO_PROFILE_FACTS, FakeToolbox, GraphBuilder
 from langchain_core.messages import AIMessage, ToolMessage
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph.state import CompiledStateGraph
-from langgraph.types import Command
+from langgraph.types import Command, StateSnapshot
 
 from assistant.graph.build import checkpoint_serializer
-from assistant.graph.nodes.executor import CANCELLED_ANSWER, REJECTED_ACTION_MESSAGE
+from assistant.graph.nodes.executor import (
+    CANCELLED_ANSWER,
+    REJECTED_ACTION_MESSAGE,
+    WRITE_ALREADY_DONE_MESSAGE,
+)
 from assistant.graph.state import AssistantContext, new_turn_state
-from assistant.mcp_server.server import build_server
 
 THREAD_CONFIG = {"configurable": {"thread_id": "ticket-thread"}}
 REQUEST = "Open a P2 IT ticket: my laptop will not boot."
@@ -28,35 +30,40 @@ LIST_TICKETS_CALL = AIMessage(
 FINAL_DRAFT = json.dumps({"text": "Done.", "citations": []})
 SUPPORTED_REVIEW = json.dumps({"supported": True, "reason": "Matches the tool result."})
 UNSUPPORTED_REVIEW = json.dumps({"supported": False, "reason": "Claim not in tool results."})
+ACCEPTED_ANSWER_REPLIES = [FINAL_DRAFT, SUPPORTED_REVIEW, NO_PROFILE_FACTS]
+
+
+def checkpointed_graph(build: GraphBuilder, replies: list[str | AIMessage]) -> CompiledStateGraph:
+    return build(replies, InMemorySaver(serde=checkpoint_serializer()))
 
 
 def start_turn(
     graph: CompiledStateGraph, context: AssistantContext, user_id: str = "khalid"
-) -> dict[str, Any]:
-    return asyncio.run(
-        graph.ainvoke(new_turn_state(user_id, REQUEST), THREAD_CONFIG, context=context)
-    )
+) -> None:
+    asyncio.run(graph.ainvoke(new_turn_state(user_id, REQUEST), THREAD_CONFIG, context=context))
 
 
 def resume_turn(graph: CompiledStateGraph, context: AssistantContext, approved: bool) -> None:
     asyncio.run(graph.ainvoke(Command(resume=approved), THREAD_CONFIG, context=context))
 
 
+def thread_snapshot(graph: CompiledStateGraph) -> StateSnapshot:
+    return asyncio.run(graph.aget_state(THREAD_CONFIG))
+
+
 def tool_messages(graph: CompiledStateGraph) -> list[ToolMessage]:
-    messages = asyncio.run(graph.aget_state(THREAD_CONFIG)).values["messages"]
+    messages = thread_snapshot(graph).values["messages"]
     return [message for message in messages if isinstance(message, ToolMessage)]
 
 
 def test_write_tool_call_pauses_for_approval_before_running(
     build_scripted_graph: GraphBuilder, toolbox: FakeToolbox
 ) -> None:
-    graph = build_scripted_graph(
-        [PLAN_TICKET_WRITE, CREATE_TICKET_CALL], InMemorySaver(serde=checkpoint_serializer())
-    )
+    graph = checkpointed_graph(build_scripted_graph, [PLAN_TICKET_WRITE, CREATE_TICKET_CALL])
 
     start_turn(graph, toolbox.context(can_write_tickets=True))
 
-    snapshot = asyncio.run(graph.aget_state(THREAD_CONFIG))
+    snapshot = thread_snapshot(graph)
     assert snapshot.next == ("request_approval",)
     assert snapshot.interrupts[0].value == {
         "proposed_action": [{"tool": "create_ticket", "args": TICKET_ARGS}]
@@ -67,50 +74,60 @@ def test_write_tool_call_pauses_for_approval_before_running(
 def test_approved_write_resumes_and_creates_the_ticket(
     build_scripted_graph: GraphBuilder, toolbox: FakeToolbox
 ) -> None:
-    replies = [PLAN_TICKET_WRITE, CREATE_TICKET_CALL, FINAL_DRAFT, SUPPORTED_REVIEW]
-    graph = build_scripted_graph(replies, InMemorySaver(serde=checkpoint_serializer()))
+    replies = [PLAN_TICKET_WRITE, CREATE_TICKET_CALL, *ACCEPTED_ANSWER_REPLIES]
+    graph = checkpointed_graph(build_scripted_graph, replies)
     context = toolbox.context(can_write_tickets=True)
 
     start_turn(graph, context)
     resume_turn(graph, context, approved=True)
 
     assert [ticket["title"] for ticket in toolbox.created_tickets] == ["Laptop will not boot"]
-    assert asyncio.run(graph.aget_state(THREAD_CONFIG)).next == ()
+    assert thread_snapshot(graph).next == ()
 
 
 def test_unverified_answer_still_reports_the_approved_write_that_ran(
     build_scripted_graph: GraphBuilder, toolbox: FakeToolbox
 ) -> None:
-    replies = [
-        PLAN_TICKET_WRITE,
-        CREATE_TICKET_CALL,
-        FINAL_DRAFT,
-        UNSUPPORTED_REVIEW,
-        FINAL_DRAFT,
-        UNSUPPORTED_REVIEW,
-    ]
-    graph = build_scripted_graph(replies, InMemorySaver(serde=checkpoint_serializer()))
+    unverified_twice = [FINAL_DRAFT, UNSUPPORTED_REVIEW, FINAL_DRAFT, UNSUPPORTED_REVIEW]
+    replies = [PLAN_TICKET_WRITE, CREATE_TICKET_CALL, *unverified_twice, NO_PROFILE_FACTS]
+    graph = checkpointed_graph(build_scripted_graph, replies)
     context = toolbox.context(can_write_tickets=True)
 
     start_turn(graph, context)
     resume_turn(graph, context, approved=True)
 
-    final_answer = asyncio.run(graph.aget_state(THREAD_CONFIG)).values["messages"][-1].text
+    final_answer = thread_snapshot(graph).values["messages"][-1].text
     assert final_answer.endswith("These approved actions did run: create_ticket.")
+
+
+def test_write_proposed_again_after_it_ran_is_neither_paused_nor_repeated(
+    build_scripted_graph: GraphBuilder, toolbox: FakeToolbox
+) -> None:
+    repeated_call = AIMessage(
+        "", tool_calls=[{"name": "create_ticket", "args": TICKET_ARGS, "id": "call-again"}]
+    )
+    replies = [PLAN_TICKET_WRITE, CREATE_TICKET_CALL, repeated_call, *ACCEPTED_ANSWER_REPLIES]
+    graph = checkpointed_graph(build_scripted_graph, replies)
+    context = toolbox.context(can_write_tickets=True)
+
+    start_turn(graph, context)
+    resume_turn(graph, context, approved=True)
+
+    assert thread_snapshot(graph).next == ()
+    assert len(toolbox.created_tickets) == 1
+    assert tool_messages(graph)[-1].text == WRITE_ALREADY_DONE_MESSAGE
 
 
 def test_rejected_write_is_cancelled_and_nothing_is_written(
     build_scripted_graph: GraphBuilder, toolbox: FakeToolbox
 ) -> None:
-    graph = build_scripted_graph(
-        [PLAN_TICKET_WRITE, CREATE_TICKET_CALL], InMemorySaver(serde=checkpoint_serializer())
-    )
+    graph = checkpointed_graph(build_scripted_graph, [PLAN_TICKET_WRITE, CREATE_TICKET_CALL])
     context = toolbox.context(can_write_tickets=True)
 
     start_turn(graph, context)
     resume_turn(graph, context, approved=False)
 
-    snapshot = asyncio.run(graph.aget_state(THREAD_CONFIG))
+    snapshot = thread_snapshot(graph)
     assert toolbox.created_tickets == []
     assert [message.text for message in tool_messages(graph)] == [REJECTED_ACTION_MESSAGE]
     assert snapshot.next == ()
@@ -120,34 +137,24 @@ def test_rejected_write_is_cancelled_and_nothing_is_written(
 def test_read_tool_call_runs_without_pausing(
     build_scripted_graph: GraphBuilder, toolbox: FakeToolbox
 ) -> None:
-    replies = [PLAN_TICKET_READ, LIST_TICKETS_CALL, FINAL_DRAFT, SUPPORTED_REVIEW]
-    graph = build_scripted_graph(replies, InMemorySaver(serde=checkpoint_serializer()))
+    replies = [PLAN_TICKET_READ, LIST_TICKETS_CALL, *ACCEPTED_ANSWER_REPLIES]
+    graph = checkpointed_graph(build_scripted_graph, replies)
 
     start_turn(graph, toolbox.context(can_write_tickets=False), user_id="nora")
 
-    snapshot = asyncio.run(graph.aget_state(THREAD_CONFIG))
-    assert snapshot.interrupts == ()
+    assert thread_snapshot(graph).interrupts == ()
     assert [message.name for message in tool_messages(graph)] == ["list_tickets"]
 
 
 def test_viewer_cannot_reach_a_write_tool_even_if_the_model_calls_one(
     build_scripted_graph: GraphBuilder, toolbox: FakeToolbox
 ) -> None:
-    replies = [PLAN_TICKET_WRITE, CREATE_TICKET_CALL, FINAL_DRAFT, SUPPORTED_REVIEW]
-    graph = build_scripted_graph(replies, InMemorySaver(serde=checkpoint_serializer()))
+    replies = [PLAN_TICKET_WRITE, CREATE_TICKET_CALL, *ACCEPTED_ANSWER_REPLIES]
+    graph = checkpointed_graph(build_scripted_graph, replies)
 
     start_turn(graph, toolbox.context(can_write_tickets=False), user_id="nora")
 
-    snapshot = asyncio.run(graph.aget_state(THREAD_CONFIG))
     [refusal] = tool_messages(graph)
-    assert snapshot.interrupts == ()
+    assert thread_snapshot(graph).interrupts == ()
     assert refusal.status == "error" and "not available" in refusal.text
     assert toolbox.created_tickets == []
-
-
-def test_mcp_server_lists_write_tools_only_for_ticket_writers() -> None:
-    def listed_tool_names(role: str) -> set[str]:
-        return {tool.name for tool in asyncio.run(build_server(role).list_tools())}
-
-    assert {"create_ticket", "update_ticket"}.isdisjoint(listed_tool_names("viewer"))
-    assert {"create_ticket", "update_ticket"} <= listed_tool_names("agent")

@@ -4,6 +4,7 @@ from assistant.config import get_settings
 from assistant.knowledge.ingest import ingest_documents
 from assistant.mcp_server.auth import Role, create_users_table
 from assistant.mcp_server.tools_tickets import create_tickets_table
+from assistant.memory.profile import create_user_memory_table
 
 SAMPLE_USERS: dict[str, Role] = {
     "nora": "viewer",
@@ -78,6 +79,7 @@ def main() -> None:
     with psycopg.connect(settings.database_url) as connection:
         seed_users(connection)
         seed_tickets(connection)
+        create_user_memory_table(connection)
     chunk_count = ingest_documents(settings.sample_docs_dir, settings.database_url)
     print(f"Seeded {len(SAMPLE_USERS)} users, sample tickets and {chunk_count} chunks")
 

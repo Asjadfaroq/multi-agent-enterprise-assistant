@@ -13,12 +13,14 @@ class Settings(BaseSettings):
     anthropic_api_key: SecretStr = SecretStr("")
     database_url: str = "postgresql://assistant:assistant@localhost:5433/assistant"
 
-    # Set per process by whoever launches the knowledge server; the model never supplies it.
-    assistant_user_id: str = ""
+    mcp_server_host: str = "127.0.0.1"
+    mcp_server_port: int = 8001
+    api_url: str = "http://127.0.0.1:8000"
 
     agent_model: str = "claude-haiku-5-5"
     judge_model: str = "claude-sonnet-5-5"
     max_review_revisions: int = Field(default=1, ge=0)
+    max_profile_facts_per_turn: int = Field(default=2, gt=0)
 
     embedding_model: str = "BAAI/bge-small-en-v1.5"
     embedding_dimensions: int = 384
@@ -35,6 +37,10 @@ class Settings(BaseSettings):
     langfuse_public_key: str = ""
     langfuse_secret_key: str = ""
     langfuse_host: str = "http://localhost:3000"
+
+    @property
+    def mcp_server_url(self) -> str:
+        return f"http://{self.mcp_server_host}:{self.mcp_server_port}/mcp"
 
 
 @lru_cache

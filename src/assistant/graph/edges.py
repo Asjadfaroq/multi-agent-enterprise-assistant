@@ -1,7 +1,5 @@
 from typing import Literal
 
-from langgraph.graph import END
-
 from assistant.graph.state import AgentState, pending_tool_calls
 from assistant.mcp_server.auth import WRITE_TOOL_NAMES
 
@@ -24,5 +22,5 @@ def route_after_executor(
     return "run_tools"
 
 
-def route_after_review(state: AgentState) -> Literal["executor", "__end__"]:
-    return "executor" if state["verdict"] == "revise" else END
+def route_after_review(state: AgentState) -> Literal["executor", "remember"]:
+    return "executor" if state["verdict"] == "revise" else "remember"
