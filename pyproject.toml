@@ -3,7 +3,7 @@ name = "assistant"
 version = "0.1.0"
 description = "Internal enterprise assistant: LangGraph agents over a permissioned pgvector knowledge base and a tickets API."
 authors = [
-    { name = "Aajadfaroq", email = "asjadfarooq22@gmail.com" }
+    { name = "Asjiad Farooq", email = "asjadfarooq22@gmail.com" }
 ]
 requires-python = ">=3.12,<3.13"
 dependencies = [
